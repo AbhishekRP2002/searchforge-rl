@@ -13,7 +13,21 @@ class VoidedRunError(Exception):
 
 
 def read_traces(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    """Every trace in a run, flattened out of the episodes that hold them.
+
+    `traces.jsonl` is one *Episode* per line, not one Trace — an episode wraps
+    `traces: list[Trace]` because a rollout can involve several agents
+    (`verifiers/v1/episode.py:103`, and `cli/output.py:1` says so outright). A
+    single-agent run has exactly one trace per line, which is what makes reading
+    the wrong level look like it works until the fields come back empty.
+
+    This mirrors what verifiers does with its own episodes when it uploads them
+    (`utils/platform.py:232`).
+    """
+    episodes = (
+        json.loads(line) for line in path.read_text().splitlines() if line.strip()
+    )
+    return [trace for episode in episodes for trace in episode.get("traces", [])]
 
 
 def _mean(values: list[float]) -> float:

@@ -142,3 +142,34 @@ def test_render_comparisons_makes_the_pairing_visible():
     assert "serper" in rendered
     assert "exa" in rendered
     assert "challenger_minus_baseline" in rendered
+
+
+def test_read_traces_unwraps_episodes(tmp_path):
+    """traces.jsonl holds one Episode per line, each wrapping `traces`. Reading a
+    line as a Trace yields empty `tools`/`metrics` rather than an error, so this
+    asserts against a real artifact — the hand-built fixtures above encoded the
+    same wrong shape as the code and could never have caught it."""
+    from pathlib import Path
+
+    from scripts.matrix import read_traces
+
+    fixture = Path(__file__).parent / "fixtures" / "traces_episodes.jsonl"
+    traces = read_traces(fixture)
+
+    assert len(traces) == 2, "two arms of one question"
+    assert {t["task"]["data"]["provider"] for t in traces} == {"serper", "exa"}
+    assert all(t["metrics"]["native_search_calls"] == 0.0 for t in traces)
+    assert all(t["rewards"]["searchforge"]["score"] == 1.0 for t in traces)
+
+
+def test_summarise_accepts_traces_read_from_a_real_artifact():
+    from pathlib import Path
+
+    from scripts.matrix import read_traces, summarise
+
+    fixture = Path(__file__).parent / "fixtures" / "traces_episodes.jsonl"
+    result = summarise(read_traces(fixture))
+
+    assert result["n"] == 2
+    assert result["accuracy"] == 1.0
+    assert result["failure_rate"] == 0.0

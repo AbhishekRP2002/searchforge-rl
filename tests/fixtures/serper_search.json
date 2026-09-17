@@ -1,0 +1,25 @@
+{
+  "searchParameters": {"q": "who founded nintendo", "type": "search"},
+  "organic": [
+    {
+      "title": "Nintendo - Wikipedia",
+      "link": "https://en.wikipedia.org/wiki/Nintendo",
+      "snippet": "Nintendo Co., Ltd. is a Japanese multinational video game company headquartered in Kyoto. It was founded in 1889 by Fusajiro Yamauchi.",
+      "date": "Aug 14, 2026",
+      "position": 1
+    },
+    {
+      "title": "Company History | Nintendo",
+      "link": "https://www.nintendo.co.jp/corporate/history/",
+      "snippet": "Nintendo was founded as a playing card manufacturer.",
+      "position": 2
+    },
+    {
+      "title": "Fusajiro Yamauchi",
+      "link": "https://en.wikipedia.org/wiki/Fusajiro_Yamauchi",
+      "snippet": "Fusajiro Yamauchi was a Japanese businessman who founded Nintendo.",
+      "position": 3
+    }
+  ],
+  "credits": 1
+}

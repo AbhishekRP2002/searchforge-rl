@@ -1,0 +1,21 @@
+{
+  "searchParameters": {"q": "who founded nintendo", "type": "search"},
+  "answerBox": {
+    "snippet": "Fusajiro Yamauchi",
+    "title": "Nintendo / Founder",
+    "link": "https://en.wikipedia.org/wiki/Fusajiro_Yamauchi"
+  },
+  "knowledgeGraph": {
+    "title": "Nintendo",
+    "description": "Nintendo Co., Ltd. is a Japanese video game company."
+  },
+  "organic": [
+    {
+      "title": "Nintendo - Wikipedia",
+      "link": "https://en.wikipedia.org/wiki/Nintendo",
+      "snippet": "Nintendo Co., Ltd. is a Japanese multinational video game company.",
+      "position": 1
+    }
+  ],
+  "credits": 1
+}

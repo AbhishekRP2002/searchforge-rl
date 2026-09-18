@@ -1,0 +1,22 @@
+# Launch config: `uv run eval @ configs/eval.toml`
+#
+# Pins the three settings whose library defaults are wrong for this project. The
+# policy model is still overridable with `-m`; everything here is a default, not a lock.
+
+model = "deepseek/deepseek-v4-flash"
+
+[env.agent.harness]
+# `bash` is the library default and needs a machine to run bash in, which drags in a
+# provisioned VM. This taskset drives tools directly, so the null harness is both
+# correct and free.
+id = "null"
+
+[env.agent.runtime]
+# The library default is `prime` with `vm = true` — a remote VM billed by the minute.
+# One task took 15 minutes to provision and produced nothing. `docker` runs locally and
+# is the only local runtime that enforces the task's `network_allow = []` policy;
+# `subprocess` errors out with "does not support framework-aware policies".
+type = "docker"
+
+[env.taskset]
+providers = ["serper", "exa"]

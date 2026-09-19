@@ -29,9 +29,28 @@ def load_rows(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+AGENT_TIMEOUT = 900.0
+"""Seconds for one agent solve attempt. Verifiers leaves every TaskTimeout slot
+None, which means no deadline at any layer: one wedged container idled roughly
+seven hours before its run could finalize. Sized for the worst observed rollout
+(10 tool calls, several multi-second fetches, a 68k-token context) with room to
+spare, so it fires on a hang and never on a slow-but-working episode."""
+
+SCORING_TIMEOUT = 300.0
+"""Seconds for judge execution. One model call per trace; a deadline here stops
+a hung grader holding the whole run open after the agent has finished."""
+
+
 class SearchForgeData(vf.TaskData):
     network_allow: list[str] = Field(default_factory=list)
     """The harness has no direct web egress; the separate MCP server owns it."""
+
+    timeout: vf.TaskTimeout = vf.TaskTimeout(
+        agent=AGENT_TIMEOUT, scoring=SCORING_TIMEOUT
+    )
+    """`setup` and `finalize` stay None: both are trivial here, and an agent
+    config timeout still overrides any of these (`agent.py` prefers its own
+    value and falls back to the task's)."""
 
     question: str
     answer: str | list[str]

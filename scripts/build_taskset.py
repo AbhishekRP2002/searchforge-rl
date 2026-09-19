@@ -26,6 +26,7 @@ import random
 import re
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 BROWSECOMP_CSV = (
     "https://openaipublic.blob.core.windows.net/simple-evals/browse_comp_test_set.csv"
@@ -253,8 +254,13 @@ DEFAULT_COUNTS = {
 }
 
 
-def sample(data, n, rng, *, indexed=False):
-    """Deterministic oversample. Adapters drop rows, so take more than asked."""
+def sample(data: Any, n: int, rng: random.Random, *, indexed: bool = False) -> list:
+    """Deterministic oversample. Adapters drop rows, so take more than asked.
+
+    `data` is Any because it is either a `datasets.Dataset` or a list of dicts,
+    and `datasets` is not installed in the type-checking environment -- it is
+    pulled in at run time with `uv run --with`.
+    """
     order = list(range(len(data)))
     rng.shuffle(order)
     picked = order[: min(len(order), int(n * 1.5) + 10)]

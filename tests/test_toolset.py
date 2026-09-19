@@ -169,3 +169,66 @@ async def test_provider_failure_logs_a_warning(monkeypatch, caplog):
         "status=503" in r.getMessage() and r.levelname == "WARNING"
         for r in caplog.records
     )
+
+
+async def test_parallel_calls_are_refused_by_default(monkeypatch):
+    """The budget already caps total spend, so parallelism cannot widen the
+    search space -- it changes the incentive toward shotgunning broad queries
+    instead of composing a precise one."""
+    import asyncio
+
+    from searchforge.servers.tool import PARALLEL_REFUSED, WebToolset, WebToolsetConfig
+
+    released = asyncio.Event()
+
+    class SlowProvider:
+        name = "serper"
+
+        async def search(self, query, num_results):
+            await released.wait()
+            return []
+
+        async def fetch(self, url):
+            return None
+
+    monkeypatch.setattr(
+        "searchforge.servers.tool.build_provider", lambda config: SlowProvider()
+    )
+    toolset = WebToolset(WebToolsetConfig(provider="serper", env_file=None))
+
+    first = asyncio.create_task(toolset.search("slow query"))
+    await asyncio.sleep(0)  # let the first call take the in-flight slot
+    second = await toolset.search("concurrent query")
+
+    assert second == PARALLEL_REFUSED
+    released.set()
+    await first
+    # The refusal is not charged: the agent is told how to call, not punished.
+    assert toolset._calls == 1
+
+
+async def test_parallel_calls_are_served_when_enabled(monkeypatch):
+    import asyncio
+
+    from searchforge.servers.tool import PARALLEL_REFUSED, WebToolset, WebToolsetConfig
+
+    class Provider:
+        name = "serper"
+
+        async def search(self, query, num_results):
+            await asyncio.sleep(0)
+            return []
+
+    monkeypatch.setattr(
+        "searchforge.servers.tool.build_provider", lambda config: Provider()
+    )
+    toolset = WebToolset(
+        WebToolsetConfig(
+            provider="serper", env_file=None, allow_parallel_tool_calls=True
+        )
+    )
+
+    both = await asyncio.gather(toolset.search("a"), toolset.search("b"))
+
+    assert PARALLEL_REFUSED not in both
+    assert toolset._calls == 2

@@ -8,6 +8,7 @@ untraced local env file; the harness runtime never receives them.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -64,6 +65,10 @@ def configure_logging() -> None:
 BUDGET_EXHAUSTED = (
     "Tool call budget exhausted for this task. Answer with what you have."
 )
+PARALLEL_REFUSED = (
+    "Parallel tool calls are disabled for this task. Issue one call at a time "
+    "and wait for its result before making the next."
+)
 UNAVAILABLE = (
     "SEARCH_PROVIDER_UNAVAILABLE: the provider remained unavailable after retries. "
     "Try a different query or answer with what you have."
@@ -95,6 +100,28 @@ class WebToolsetConfig(vf.ToolsetConfig):
     providers lack, not better retrieval. Off by default."""
     max_tool_calls: int = 10
 
+    allow_parallel_tool_calls: bool = False
+    """Whether the agent may have more than one tool call in flight at once.
+
+    Real deployments want parallel search: it hides latency and gathers more per
+    turn. It is off by default here anyway, for two reasons that only matter
+    while training.
+
+    The shared `max_tool_calls` budget already caps total spend, so parallelism
+    cannot widen the search space -- it spends the same budget faster. What it
+    does change is the incentive. An agent that can fan out is rewarded for
+    shotgunning broad queries rather than composing a precise one, and query
+    precision is the behaviour this environment exists to train. It also
+    arrives as one large token burst, which matters when the reference
+    `seq_len` is 4,096.
+
+    Turn it on to study that trade-off; it is a knob, not a verdict. Note that
+    verifiers 0.3.1 exposes no `parallel_tool_calls` sampling field, so this is
+    enforced here at the tool server rather than on the model request: the
+    model may still *emit* parallel calls, and the ones beyond the first are
+    refused with a message instead of being served.
+    """
+
 
 def build_provider(config: WebToolsetConfig) -> SearchProvider:
     spec = PROVIDERS.get(config.provider)
@@ -124,25 +151,45 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
     def __init__(self, config: WebToolsetConfig) -> None:
         super().__init__(config)
         self._calls = 0
+        self._in_flight = asyncio.Lock()
 
     def _spend(self) -> bool:
+        # No await between the check and the increment, so concurrent callers
+        # cannot both pass the budget test on the same remaining call.
         if self._calls >= self.config.max_tool_calls:
             return False
         self._calls += 1
+        return True
+
+    def _claim(self) -> bool:
+        """Take the single in-flight slot, when parallelism is disabled.
+
+        A refused call is deliberately not charged to the budget: the agent is
+        being told how to call, not being punished for it, and charging would
+        make the refusal itself an incentive to avoid tools.
+        """
+        if self.config.allow_parallel_tool_calls:
+            return True
+        if self._in_flight.locked():
+            return False
         return True
 
     @vf.tool
     async def search(self, query: str) -> str:
         """Search the web for a query. Returns ranked results with titles, URLs
         and text excerpts."""
+        if not self._claim():
+            logger.info("search refused: parallel tool calls are disabled")
+            return PARALLEL_REFUSED
         if not self._spend():
             logger.info("search budget_exhausted after %d calls", self._calls)
             return BUDGET_EXHAUSTED
         started = time.perf_counter()
         try:
-            results = await build_provider(self.config).search(
-                query, self.config.num_results
-            )
+            async with self._in_flight:
+                results = await build_provider(self.config).search(
+                    query, self.config.num_results
+                )
         except ProviderError as exc:
             logger.warning(
                 "search provider=%s status=%s retryable=%s query=%r",
@@ -170,12 +217,16 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
         """Retrieve the readable text of one web page by its URL."""
         if not url.startswith(("http://", "https://")):
             return f"Not a fetchable URL: {url!r}. Pass an http or https URL."
+        if not self._claim():
+            logger.info("fetch refused: parallel tool calls are disabled")
+            return PARALLEL_REFUSED
         if not self._spend():
             logger.info("fetch budget_exhausted after %d calls", self._calls)
             return BUDGET_EXHAUSTED
         started = time.perf_counter()
         try:
-            page = await build_provider(self.config).fetch(url)
+            async with self._in_flight:
+                page = await build_provider(self.config).fetch(url)
         except ProviderError as exc:
             logger.warning(
                 "fetch provider=%s status=%s retryable=%s url=%s",

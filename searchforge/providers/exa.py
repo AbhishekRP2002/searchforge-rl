@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 
 from searchforge.providers.base import PageContent, ProviderError, SearchResult
-from searchforge.providers.transport import TIMEOUT, post_json
+from searchforge.providers.transport import TIMEOUT, request_json
 
 EXA_SEARCH_URL = "https://api.exa.ai/search"
 EXA_CONTENTS_URL = "https://api.exa.ai/contents"
@@ -23,7 +23,7 @@ class ExaProvider:
 
     async def search(self, query: str, num_results: int) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            response = await post_json(
+            response = await request_json(
                 client,
                 EXA_SEARCH_URL,
                 provider=self.name,
@@ -53,7 +53,7 @@ class ExaProvider:
 
     async def fetch(self, url: str) -> PageContent:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            response = await post_json(
+            response = await request_json(
                 client,
                 EXA_CONTENTS_URL,
                 provider=self.name,

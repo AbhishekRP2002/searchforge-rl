@@ -15,10 +15,14 @@ from tenacity import (
 
 from searchforge.providers.base import ProviderError
 
+QueryValue = str | int | float | bool | None
+"""What httpx will URL-encode into a query string. Narrower than the JSON body
+type, because a nested structure has no defined encoding in a query parameter."""
+
 TIMEOUT = 30.0
 RETRY_ATTEMPTS = 3
 RETRY_WAIT = wait_exponential_jitter(initial=0.5, max=8.0)
-"""One policy for every provider. `post_json` reads these as module globals at call
+"""One policy for every provider. `request_json` reads these as module globals at call
 time rather than binding them as default arguments, so monkeypatching RETRY_WAIT
 here actually takes effect — a default would bind once, at import.
 """
@@ -28,15 +32,24 @@ def _retryable(exc: BaseException) -> bool:
     return isinstance(exc, ProviderError) and exc.retryable
 
 
-async def post_json(
+async def request_json(
     client: httpx.AsyncClient,
     url: str,
     *,
     provider: str,
     headers: dict[str, str],
-    payload: dict[str, object],
+    method: str = "POST",
+    payload: dict[str, object] | None = None,
+    params: dict[str, QueryValue] | None = None,
 ) -> httpx.Response:
-    """POST with the provider policy: retry transport faults, 429 and 5xx."""
+    """Issue one provider request under the shared policy: retry transport faults,
+    429 and 5xx; never retry an auth failure.
+
+    `method`/`params` exist because the contract is not POST-only: TinyFish's search
+    and Keenable's fetch are GET endpoints that carry their arguments in the query
+    string. Routing them through the same function keeps one retry policy for every
+    provider rather than letting the GET adapters grow their own.
+    """
     logger = logging.getLogger(f"searchforge.providers.{provider}")
     async for attempt in AsyncRetrying(
         stop=stop_after_attempt(RETRY_ATTEMPTS),
@@ -47,7 +60,9 @@ async def post_json(
     ):
         with attempt:
             try:
-                response = await client.post(url, headers=headers, json=payload)
+                response = await client.request(
+                    method, url, headers=headers, json=payload, params=params
+                )
             except httpx.TransportError as exc:
                 raise ProviderError(
                     f"{provider} transport error: {exc}", retryable=True

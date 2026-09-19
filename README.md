@@ -1,8 +1,15 @@
 # SearchForge
 
 SearchForge is a Verifiers v1 environment for paired evaluation of web-search
-agents across Serper and Exa. It exposes two MCP tools—`web_search` and
-`web_fetch`—and records provider-attributable rewards, diagnostics and traces.
+agents across interchangeable search providers. It exposes two MCP tools—
+`web_search` and `web_fetch`—and records provider-attributable rewards,
+diagnostics and traces.
+
+Seven providers ship: **Serper**, **Exa**, **Firecrawl**, **Tavily**,
+**Parallel**, **TinyFish** and **Keenable**. Each supplies both tools and
+normalises to the same five search fields (`title`, `url`, `excerpt`, `date`,
+`rank`) and four page fields (`url`, `title`, `text`, `date`). Any two of them
+can form a paired comparison arm.
 
 ## Setup
 
@@ -16,21 +23,35 @@ Fill `.env` locally. It is ignored by git:
 ```dotenv
 SERPER_API_KEY=...
 EXA_API_KEY=...
+FIRECRAWL_API_KEY=...
+TAVILY_API_KEY=...
+PARALLEL_API_KEY=...
+TINYFISH_API_KEY=...
+KEENABLE_API_KEY=...
 PRIME_API_KEY=...
 ```
 
-Provider keys are read only by the separate MCP server. They are not forwarded to
-the harness runtime or serialized into traces. `PRIME_API_KEY` is used by the
-documented model/judge endpoint.
+Only the providers you actually run need a value; a blank key skips that
+provider's live check rather than failing it. Provider keys are read only by the
+separate MCP server. They are not forwarded to the harness runtime or serialized
+into traces. `PRIME_API_KEY` is used by the documented model/judge endpoint.
 
 ## Design defaults
 
-- Serper and Exa form a paired comparison over the same `source_id` rows.
+- Any two providers form a paired comparison over the same `source_id` rows.
 - The harness has `network_allow=[]`; provider HTTP originates from the separate
   tool server.
-- Serper retries transport faults, 429 and 5xx responses up to three attempts with
-  exponential jitter. Exa applies the same policy. Authentication faults are never
-  retried.
+- One retry policy covers every provider, in `providers/transport.py`: transport
+  faults, 429 and 5xx retry up to three attempts with exponential jitter.
+  Authentication faults are never retried.
+- Every adapter calls its provider with ordinary default settings. Two exceptions
+  are deliberate and named in code, because leaving the default would have capped
+  or advantaged one arm alone: Keenable's server-side `max_chars` (50,000 by
+  default) is raised out of the way, and Parallel's `max_results` (10 by default)
+  is set explicitly to the configured `num_results`.
+- Provider features that answer the question for the agent stay off: Serper's
+  `answerBox`, Tavily's `include_answer`, Exa's `deep` modes and Parallel's
+  `objective` are capability asymmetries, not retrieval quality.
 - There are deliberately no snippet or page character caps. Token and tool-result
   behavior is measured before any truncation policy is chosen.
 - The system prompt states the enforced shared tool-call budget. MCP injects tool

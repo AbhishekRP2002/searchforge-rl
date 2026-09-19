@@ -1,0 +1,16 @@
+{
+  "extract_id": "extract_abc",
+  "results": [
+    {
+      "url": "https://example.com/nintendo-history",
+      "title": "Nintendo - History",
+      "excerpts": [
+        "Nintendo was founded by Fusajiro Yamauchi in 1889."
+      ],
+      "full_content": "Nintendo was founded by Fusajiro Yamauchi in 1889."
+    }
+  ],
+  "errors": [],
+  "warnings": null,
+  "session_id": "session_abc"
+}

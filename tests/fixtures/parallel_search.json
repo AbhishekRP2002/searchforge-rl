@@ -1,0 +1,30 @@
+{
+  "search_id": "search_abc",
+  "results": [
+    {
+      "url": "https://example.com/nintendo-history",
+      "title": "Nintendo - History",
+      "publish_date": "2025-01-02",
+      "excerpts": [
+        "Nintendo was founded by Fusajiro Yamauchi in 1889.",
+        "The company initially produced handmade playing cards."
+      ]
+    },
+    {
+      "url": "https://example.org/nintendo",
+      "title": "Nintendo company profile",
+      "publish_date": null,
+      "excerpts": [
+        "A short company profile."
+      ]
+    }
+  ],
+  "warnings": null,
+  "usage": [
+    {
+      "name": "sku_search",
+      "count": 1
+    }
+  ],
+  "session_id": "session_abc"
+}

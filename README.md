@@ -1,15 +1,108 @@
 # SearchForge
 
-SearchForge is a Verifiers v1 environment for paired evaluation of web-search
-agents across interchangeable search providers. It exposes two MCP tools—
-`web_search` and `web_fetch`—and records provider-attributable rewards,
-diagnostics and traces.
+**A packaged environment for training and evaluating web-search agents with RL,
+where the search backend is a measured variable rather than a fixed assumption.**
 
-Seven providers ship: **Serper**, **Exa**, **Firecrawl**, **Tavily**,
-**Parallel**, **TinyFish** and **Keenable**. Each supplies both tools and
-normalises to the same five search fields (`title`, `url`, `excerpt`, `date`,
-`rank`) and four page fields (`url`, `title`, `text`, `date`). Any two of them
-can form a paired comparison arm.
+## Why this exists
+
+Teams training search agents with RL tune the model, the prompt, the reward and
+the algorithm — and treat the search tool as fixed plumbing. It is not. The
+backend an agent trains on shapes how fast it learns, how many calls it makes
+per rollout, and how well it performs once deployed.
+
+Exa published a controlled experiment making exactly this point: same model
+(Qwen3-4B), same prompt, same training data, same RL algorithm, same grader —
+only the search API differed.
+
+| Measurement | Exa | SERP |
+| --- | --- | --- |
+| SimpleQA pass@1 | 0.767 | 0.692 |
+| Search results containing the answer | 36.1% | 32.6% |
+| Search calls to reach equal performance | baseline | +62% |
+| Training tokens to match final performance | −69% | baseline |
+
+That result may well be right. But it is a vendor benchmark where the vendor's
+product is the treatment arm, the control is an unnamed "SERP (Google proxy)",
+and the grader is the vendor's own. Nobody outside can re-run it.
+
+SearchForge is the apparatus to re-run it — for any model, against any provider,
+with the grader and the reward under your control.
+
+## What it gives you
+
+- **A provider-attributable baseline, with no GPU.** Run your model against
+  several search backends over the same questions and get accuracy, retrieval
+  quality, tool usage, token cost and failure rates per arm. This is the primary
+  entry point and it is cheap.
+- **A paired experimental design by default.** Every question runs on every
+  provider and arms join on `source_id`, so task difficulty cancels and the test
+  runs on discordant pairs. Unpaired sampling at realistic n cannot resolve a
+  7-point effect; pairing can, at the same cost.
+- **An RL environment, not just a benchmark.** The same taskset, tools, rewards
+  and traces feed prime-rl for training a small open-weight model, then
+  re-evaluating the checkpoint in the same harness.
+- **Rewards that are hard to game.** One reference-based judge at weight 1.0,
+  a truncation penalty, and everything else measured at weight 0 — because RL
+  optimises whatever you score, including paths you did not intend.
+
+## The knobs
+
+The search provider is the first configurable variable, and the one this
+project exists to measure. It is not the only one, and more will follow.
+
+| Config path | What it swaps | Status |
+| --- | --- | --- |
+| `env.taskset.providers` | Search backend, and the comparison arms | **Seven shipped** |
+| `env.taskset.task.tools.*` | Result count, rendering, call budget, answer-box policy | Shipped |
+| `env.taskset.task.judges` | Judge model and prompt | Shipped |
+| `env.taskset.task.rewards` | Your reward by import path; re-weight ours | Shipped |
+| `env.taskset.task.metrics` | Diagnostics, same mechanism | Shipped |
+| `model` | Any endpoint | Shipped |
+| `env.agent.harness.id` | `null`, `bash`, `codex`, `claude_code`, your own | Shipped |
+| `env.agent.runtime.type` | `subprocess`, `docker`, `prime`, `modal` | Shipped |
+| Task mixture and sources | Which benchmarks, in what proportion | Dataset design open |
+| Training recipe | prime-rl integration | Next milestone |
+
+**The discipline:** any run may change anything. A run *labelled as a provider
+comparison* asserts that everything except the provider matched its sibling, and
+says so loudly when it did not.
+
+## Status
+
+Evaluation works end to end and is proven against live providers. Training is
+not yet wired.
+
+| | |
+| --- | --- |
+| Environment, tools, rewards, judge, trace analysis | Working |
+| Seven provider adapters, live-verified | Working |
+| Paired Serper × Exa baseline on the seed set | Produced — a null result at n=8 |
+| Task dataset | **Seed only.** 8 rows, too small to discriminate |
+| prime-rl training | Not started |
+
+The seed dataset is a smoke fixture, not a benchmark. Building the real mixture
+from SimpleQA, FRAMES, 2WikiMultihopQA, MuSiQue, HotpotQA and BrowseComp — each
+row stamped with its `source_dataset` — is the open work that everything
+downstream is sized against.
+
+## Providers
+
+Seven ship, each supplying both tools and normalising to the same five search
+fields (`title`, `url`, `excerpt`, `date`, `rank`) and four page fields (`url`,
+`title`, `text`, `date`). Any two form a paired comparison arm.
+
+| Provider | Search | Fetch |
+| --- | --- | --- |
+| Serper | Google SERP | `scrape.serper.dev` |
+| Exa | neural index, `type=auto` | contents API |
+| Firecrawl | `/v2/search` | `/v2/scrape` |
+| Tavily | `/search` | `/extract` |
+| Parallel | `/v1/search` | `/v1/extract` |
+| TinyFish | `api.search.tinyfish.ai` | `api.fetch.tinyfish.ai` |
+| Keenable | `/v1/search` | `/v1/fetch` |
+
+Adding one is a file plus a registry entry; the shared contract suite runs
+against it automatically.
 
 ## Setup
 
@@ -114,6 +207,16 @@ uv run python scripts/matrix.py \
   model-a=exa=outputs/exa/traces.jsonl
 ```
 
-The implementation plan and current gate status are in
-[Plan 1](docs/superpowers/plans/2026-09-17-evaluation-environment.md) and the
-[implementation ledger](docs/LEDGER.md).
+## Project documents
+
+The spec, the implementation plans and the ledger live under `docs/` and are
+deliberately untracked (`.gitignore`), so they are present in a working
+checkout but not in the repository:
+
+- `docs/spec/searchforge-v0.md` — the technical specification
+- `docs/superpowers/plans/` — per-phase implementation plans
+- `docs/LEDGER.md` — what is implemented, what is proven live, and every
+  locked decision with its reason
+
+The ledger is the authority on status. This README describes intent; the ledger
+records which gates have actually been met.

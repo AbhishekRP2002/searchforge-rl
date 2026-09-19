@@ -299,17 +299,3 @@ uv run python scripts/matrix.py \
   model-a=serper=outputs/serper/traces.jsonl \
   model-a=exa=outputs/exa/traces.jsonl
 ```
-
-## Project documents
-
-The spec, the implementation plans and the ledger live under `docs/` and are
-deliberately untracked (`.gitignore`), so they are present in a working
-checkout but not in the repository:
-
-- `docs/spec/searchforge-v0.md` — the technical specification
-- `docs/superpowers/plans/` — per-phase implementation plans
-- `docs/LEDGER.md` — what is implemented, what is proven live, and every
-  locked decision with its reason
-
-The ledger is the authority on status. This README describes intent; the ledger
-records which gates have actually been met.

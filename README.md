@@ -77,13 +77,59 @@ not yet wired.
 | Environment, tools, rewards, judge, trace analysis | Working |
 | Seven provider adapters, live-verified | Working |
 | Paired Serper × Exa baseline on the seed set | Produced — a null result at n=8 |
-| Task dataset | **Seed only.** 8 rows, too small to discriminate |
+| Task mixture from five published benchmarks | Built, 300 rows, **not yet re-validated** |
 | prime-rl training | Not started |
 
-The seed dataset is a smoke fixture, not a benchmark. Building the real mixture
-from SimpleQA, FRAMES, 2WikiMultihopQA, MuSiQue, HotpotQA and BrowseComp — each
-row stamped with its `source_dataset` — is the open work that everything
-downstream is sized against.
+## The task mixture
+
+Questions are borrowed; the **distribution is designed here**, and that is what
+separates a dataset from a benchmark. Every row carries `source_dataset`, so any
+result slices by where the question came from — the difference between "this
+provider is better" and "this provider is better on multi-hop Wikipedia
+questions".
+
+`searchforge/data/tasks_v1.jsonl` — 300 rows, built reproducibly from seed 0:
+
+| Source | Rows | Hops | Why it is in the mixture |
+| --- | --- | --- | --- |
+| SimpleQA | 60 | 1 | Single-hop: raw retrieval, no planning |
+| HotpotQA | 60 | 2 | Two-hop bridge and comparison |
+| MuSiQue | 60 | 2–3+ | Harder composition, hop count in the source id |
+| 2WikiMultihopQA | 60 | 2–3+ | Multi-hop over a different Wikipedia slice |
+| FRAMES | 60 | 3+ | Multiple constraints per question |
+
+Sizing is not arbitrary. McNemar on paired samples needs roughly 277 pairs to
+detect a 7.5-point effect at 80% power assuming a 20% discordance rate; 300
+clears that. The 8-row seed set (`tasks_v0.jsonl`, still the packaged default
+for smoke runs) could not — it produced 7 ties out of 7.
+
+```bash
+# regenerate, or change the mixture
+uv run --with datasets python -m scripts.build_taskset --hotpotqa 100 --simpleqa 40
+
+# run against it
+uv run eval searchforge --env.taskset.data_path searchforge/data/tasks_v1.jsonl
+```
+
+**Two honest caveats.**
+
+*Axes are derived, never guessed.* `hops` and `answer_type` come from what the
+source actually determines — MuSiQue encodes hops in its id, SimpleQA ships a
+native answer type, 2Wiki gives evidence triples. `popularity` and
+`evidence_depth` need an external signal or a pilot run, so they are written as
+`unknown` rather than fabricated. A made-up axis is worse than a missing one,
+because the analysis would slice on it and believe the result.
+
+*Rows are not re-validated.* Spec section 9 requires every borrowed item to be
+checked against the live web and stamped. `validated_on` is empty, and stays
+empty until that pass runs.
+
+BrowseComp has a loader but is **off by default and not shipped**. OpenAI
+publishes it encrypted so the questions stay out of training corpora; writing
+decrypted rows into a public repository would help contaminate it. Generate a
+local sample with `--browsecomp N` and leave the output untracked. It is also a
+poor training signal — built so answers are hard to find, so at a 10-call budget
+most rollouts fail and a group with all-zero rewards yields no GRPO advantage.
 
 ## Providers
 
@@ -159,9 +205,10 @@ uv run eval searchforge --dry-run --no-push \
   --env.taskset.providers '["serper", "exa"]'
 ```
 
-The default dataset is a package asset at
-`searchforge/data/tasks_v0.jsonl`, so installed wheels do not depend on a repository
-checkout.
+Datasets are package assets under `searchforge/data/`, so installed wheels do
+not depend on a repository checkout. `tasks_v0.jsonl` (8 rows) stays the default
+because it keeps a smoke run cheap; pass `--env.taskset.data_path` to select the
+300-row `tasks_v1.jsonl` mixture.
 
 ## Live provider checks
 

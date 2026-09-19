@@ -1,0 +1,18 @@
+{
+  "success": true,
+  "data": {
+    "web": [
+      {
+        "url": "https://example.com/nintendo-history",
+        "title": "Nintendo - History",
+        "description": "Nintendo was founded by Fusajiro Yamauchi in 1889.",
+        "date": "2025-01-02"
+      },
+      {
+        "url": "https://example.org/nintendo",
+        "title": "Nintendo company profile",
+        "description": "A short company profile."
+      }
+    ]
+  }
+}

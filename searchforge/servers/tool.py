@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import verifiers.v1 as vf
@@ -19,10 +20,25 @@ from dotenv import dotenv_values
 
 from searchforge.providers.base import ProviderError, SearchProvider
 from searchforge.providers.exa import ExaProvider
+from searchforge.providers.firecrawl import FirecrawlProvider
+from searchforge.providers.keenable import KeenableProvider
+from searchforge.providers.parallel import ParallelProvider
 from searchforge.providers.serper import SerperProvider
+from searchforge.providers.tavily import TavilyProvider
+from searchforge.providers.tinyfish import TinyFishProvider
 from searchforge.render import render_page, render_results
 
-PROVIDER_KEY_ENV = {"serper": "SERPER_API_KEY", "exa": "EXA_API_KEY"}
+PROVIDERS: dict[str, tuple[str, Callable[[str], SearchProvider]]] = {
+    "serper": ("SERPER_API_KEY", SerperProvider),
+    "exa": ("EXA_API_KEY", ExaProvider),
+    "firecrawl": ("FIRECRAWL_API_KEY", FirecrawlProvider),
+    "tavily": ("TAVILY_API_KEY", TavilyProvider),
+    "parallel": ("PARALLEL_API_KEY", ParallelProvider),
+    "tinyfish": ("TINYFISH_API_KEY", TinyFishProvider),
+    "keenable": ("KEENABLE_API_KEY", KeenableProvider),
+}
+
+PROVIDER_KEY_ENV = {name: variable for name, (variable, _) in PROVIDERS.items()}
 
 logger = logging.getLogger("searchforge.tools")
 
@@ -43,6 +59,7 @@ def configure_logging() -> None:
         stream=sys.stderr,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
     )
+
 
 BUDGET_EXHAUSTED = (
     "Tool call budget exhausted for this task. Answer with what you have."
@@ -80,12 +97,12 @@ class WebToolsetConfig(vf.ToolsetConfig):
 
 
 def build_provider(config: WebToolsetConfig) -> SearchProvider:
-    if config.provider not in PROVIDER_KEY_ENV:
+    spec = PROVIDERS.get(config.provider)
+    if spec is None:
         raise ValueError(
-            f"unknown provider {config.provider!r}; "
-            f"expected one of {sorted(PROVIDER_KEY_ENV)}"
+            f"unknown provider {config.provider!r}; expected one of {sorted(PROVIDERS)}"
         )
-    variable = PROVIDER_KEY_ENV[config.provider]
+    variable, construct = spec
     key = os.environ.get(variable)
     if not key and config.env_file:
         key = dotenv_values(config.env_file).get(variable)
@@ -94,9 +111,11 @@ def build_provider(config: WebToolsetConfig) -> SearchProvider:
             f"{variable} is missing from the provider server. Export it in that "
             f"process or set WebToolsetConfig.env_file to a local .env file."
         )
-    if config.provider == "serper":
+    if construct is SerperProvider:
+        # ponytail: one branch for the one provider carrying an extra config flag.
+        # A factory per provider would be more code than the branch it removes.
         return SerperProvider(key, include_answer_box=config.include_answer_box)
-    return ExaProvider(key)
+    return construct(key)
 
 
 class WebToolset(vf.Toolset[WebToolsetConfig]):
@@ -127,14 +146,21 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
         except ProviderError as exc:
             logger.warning(
                 "search provider=%s status=%s retryable=%s query=%r",
-                self.config.provider, exc.status, exc.retryable, query[:80],
+                self.config.provider,
+                exc.status,
+                exc.retryable,
+                query[:80],
             )
             return _recoverable_failure(exc)
         rendered = render_results(results, self.config.result_format)
         logger.info(
             "search provider=%s call=%d/%d hits=%d chars=%d ms=%.0f query=%r",
-            self.config.provider, self._calls, self.config.max_tool_calls,
-            len(results), len(rendered), (time.perf_counter() - started) * 1000,
+            self.config.provider,
+            self._calls,
+            self.config.max_tool_calls,
+            len(results),
+            len(rendered),
+            (time.perf_counter() - started) * 1000,
             query[:80],
         )
         return rendered
@@ -153,7 +179,10 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
         except ProviderError as exc:
             logger.warning(
                 "fetch provider=%s status=%s retryable=%s url=%s",
-                self.config.provider, exc.status, exc.retryable, url[:120],
+                self.config.provider,
+                exc.status,
+                exc.retryable,
+                url[:120],
             )
             return _recoverable_failure(exc)
         rendered = render_page(page)
@@ -162,8 +191,12 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
         # the number that makes that visible while it happens instead of afterwards.
         logger.info(
             "fetch provider=%s call=%d/%d chars=%d ms=%.0f url=%s",
-            self.config.provider, self._calls, self.config.max_tool_calls,
-            len(rendered), (time.perf_counter() - started) * 1000, url[:120],
+            self.config.provider,
+            self._calls,
+            self.config.max_tool_calls,
+            len(rendered),
+            (time.perf_counter() - started) * 1000,
+            url[:120],
         )
         return rendered
 

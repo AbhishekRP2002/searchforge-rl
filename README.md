@@ -60,8 +60,9 @@ project exists to measure. It is not the only one, and more will follow.
 | `model` | Any endpoint | Shipped |
 | `env.agent.harness.id` | `null`, `bash`, `codex`, `claude_code`, your own | Shipped |
 | `env.agent.runtime.type` | `subprocess`, `docker`, `prime`, `modal` | Shipped |
-| Task mixture and sources | Which benchmarks, in what proportion | Dataset design open |
+| `env.taskset.data_path` | Task mixture and its sources | **300 rows, five benchmarks** |
 | Training recipe | prime-rl integration | Next milestone |
+| RL algorithm | GRPO today; other estimators, verl | Planned |
 
 **The discipline:** any run may change anything. A run *labelled as a provider
 comparison* asserts that everything except the provider matched its sibling, and
@@ -79,6 +80,51 @@ not yet wired.
 | Paired Serper × Exa baseline on the seed set | Produced — a null result at n=8 |
 | Task mixture from five published benchmarks | Built, 300 rows, **not yet re-validated** |
 | prime-rl training | Not started |
+
+## Where this is going
+
+Exa closed their webinar on this note: *"The retriever affects final
+performance and the learning signal."* That is the premise — and the same
+argument applies to every other component a training team treats as fixed. The
+search backend is simply the first one this project proves is a variable.
+
+**Every assumed-fixed component becomes a measured knob.** RL algorithm, harness,
+reward shape, mixture weights. Each is a config path rather than a fork, and
+each labelled run asserts what was held constant. Harness is a good example of a
+knob nobody reports: switching it changes *where the system prompt lands*, which
+silently changes results.
+
+**Context pruning is already the binding constraint here, not a future idea.**
+Exa lists "content fetching and context pruning" as what comes next. In this
+repository it is what blocks training today. Measured over 16 rollouts and 29
+fetches: `web_search` returns a median 1,304 characters and a maximum of 1,561,
+so it needs no cap at all. `web_fetch` is bimodal — 20 fetches at ≤24,627
+characters, then a cliff to 107,108 and 161,937. Median rollout is ~20k tokens
+against a reference `seq_len` of 4,096. Every rollout truncates, every sample
+takes the −0.25 penalty, and a group with identical rewards yields no GRPO
+advantage: full GPU cost, no gradient. A cap has to be chosen, and it has to
+apply identically to every arm or it becomes a hidden provider advantage — which
+is exactly the flaw this project exists to catch.
+
+**Interpretability needs no new instrumentation.** The trace already holds every
+query the agent issued, in order, with its results and per-token trainable
+flags. So the questions are answerable from what is already recorded: did query
+formulation change after training? Did the agent learn when to stop? Did it
+learn to fetch rather than search again? That is the mechanism behind a headline
+like "62% fewer calls", and it has not been published per-provider.
+
+**Scale is a validity question, not an ambition.** The published result is
+Qwen3-4B. Whether a provider effect survives at 32B decides whether any of this
+matters to people running frontier models, and a 4B result does not transfer by
+assumption.
+
+**The thing that gets harder as knobs multiply.** N knobs means exponentially
+many cells, and the value was never "swap everything at once" — it is "swap one
+thing and get a comparison that holds". That puts the weight on the environment
+refusing to render a comparison whose arms differ in more than one place.
+Today's gap: the serialized trace records no toolset configuration
+(`task.config` is `null`), so `scripts/matrix.py` cannot assert a fingerprint
+yet. With one knob that is a small risk. With six it is the whole ballgame.
 
 ## The task mixture
 

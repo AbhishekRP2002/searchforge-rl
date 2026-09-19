@@ -6,7 +6,7 @@ from __future__ import annotations
 import httpx
 
 from searchforge.providers.base import PageContent, SearchResult
-from searchforge.providers.transport import TIMEOUT, post_json
+from searchforge.providers.transport import TIMEOUT, request_json
 
 SERPER_SEARCH_URL = "https://google.serper.dev/search"
 SERPER_SCRAPE_URL = "https://scrape.serper.dev"
@@ -25,7 +25,7 @@ class SerperProvider:
 
     async def search(self, query: str, num_results: int) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            response = await post_json(
+            response = await request_json(
                 client,
                 SERPER_SEARCH_URL,
                 provider=self.name,
@@ -59,7 +59,7 @@ class SerperProvider:
 
     async def fetch(self, url: str) -> PageContent:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
-            response = await post_json(
+            response = await request_json(
                 client,
                 SERPER_SCRAPE_URL,
                 provider=self.name,

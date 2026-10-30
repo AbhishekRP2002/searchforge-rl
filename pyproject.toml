@@ -10,6 +10,9 @@ dependencies = [
     "tenacity>=8.2",
 ]
 
+[project.scripts]
+searchforge-report = "searchforge.analysis.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",

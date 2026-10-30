@@ -14,9 +14,16 @@ asked.
 
 from __future__ import annotations
 
+from datetime import date
+
 import httpx
 
-from searchforge.providers.base import PageContent, ProviderError, SearchResult
+from searchforge.providers.base import (
+    PageContent,
+    ProviderError,
+    SearchResult,
+    refuse_native_dates,
+)
 from searchforge.providers.transport import TIMEOUT, request_json
 
 PARALLEL_SEARCH_URL = "https://api.parallel.ai/v1/search"
@@ -41,6 +48,9 @@ rejected with a 422 rather than ignored — which is how the live gate caught it
 
 class ParallelProvider:
     name = "parallel"
+    supports_date_filter = False
+    """Parallel documents `source_policy.after_date` but no upper bound, so a
+    two-sided window cannot be served natively. Run it under `emulated`."""
 
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
@@ -49,7 +59,15 @@ class ParallelProvider:
     def _headers(self) -> dict[str, str]:
         return {"x-api-key": self._api_key, "Content-Type": "application/json"}
 
-    async def search(self, query: str, num_results: int) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        num_results: int,
+        *,
+        after: date | None = None,
+        before: date | None = None,
+    ) -> list[SearchResult]:
+        refuse_native_dates(self.name, after, before)
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await request_json(
                 client,

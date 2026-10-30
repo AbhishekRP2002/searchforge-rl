@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import httpx
 
 from searchforge.providers.base import PageContent, ProviderError, SearchResult
@@ -13,6 +15,7 @@ EXA_CONTENTS_URL = "https://api.exa.ai/contents"
 
 class ExaProvider:
     name = "exa"
+    supports_date_filter = True
 
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
@@ -21,7 +24,14 @@ class ExaProvider:
     def _headers(self) -> dict[str, str]:
         return {"x-api-key": self._api_key, "Content-Type": "application/json"}
 
-    async def search(self, query: str, num_results: int) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        num_results: int,
+        *,
+        after: date | None = None,
+        before: date | None = None,
+    ) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await request_json(
                 client,
@@ -33,6 +43,18 @@ class ExaProvider:
                     "type": "auto",
                     "numResults": num_results,
                     "contents": {"highlights": True},
+                    # Exa takes timestamps; the day's first and last instant keep
+                    # both bounds inclusive, matching every other arm.
+                    **(
+                        {"startPublishedDate": f"{after.isoformat()}T00:00:00.000Z"}
+                        if after
+                        else {}
+                    ),
+                    **(
+                        {"endPublishedDate": f"{before.isoformat()}T23:59:59.999Z"}
+                        if before
+                        else {}
+                    ),
                 },
             )
 

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import date
+from typing import ClassVar, Protocol
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,28 @@ class ProviderError(Exception):
 class SearchProvider(Protocol):
     name: str
 
-    async def search(self, query: str, num_results: int) -> list[SearchResult]: ...
+    supports_date_filter: ClassVar[bool]
+    """True only when the provider documents a native filter for *both* bounds.
+
+    This is the capability table for `date_filter="native"`: a provider with
+    half a filter (say, a start date only) would answer a two-sided window
+    differently from every other arm, so it counts as unsupported."""
+
+    async def search(
+        self,
+        query: str,
+        num_results: int,
+        *,
+        after: date | None = None,
+        before: date | None = None,
+    ) -> list[SearchResult]: ...
 
     async def fetch(self, url: str) -> PageContent: ...
+
+
+def refuse_native_dates(name: str, after: date | None, before: date | None) -> None:
+    """Guard for adapters without a native date filter. The tool server refuses
+    such a configuration before any call; this catches a direct caller, so a
+    filter is never silently dropped on one arm."""
+    if after or before:
+        raise ValueError(f"{name} has no native date filter; use date_filter='emulated'")

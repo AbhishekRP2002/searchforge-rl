@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import httpx
 
@@ -36,6 +36,7 @@ def _iso(published_at: object) -> str | None:
 
 class KeenableProvider:
     name = "keenable"
+    supports_date_filter = True
 
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
@@ -44,14 +45,27 @@ class KeenableProvider:
     def _headers(self) -> dict[str, str]:
         return {"X-API-Key": self._api_key, "Content-Type": "application/json"}
 
-    async def search(self, query: str, num_results: int) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        num_results: int,
+        *,
+        after: date | None = None,
+        before: date | None = None,
+    ) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await request_json(
                 client,
                 KEENABLE_SEARCH_URL,
                 provider=self.name,
                 headers=self._headers,
-                payload={"query": query, "max_results": num_results},
+                payload={
+                    "query": query,
+                    "max_results": num_results,
+                    # A bare YYYY-MM-DD covers the whole UTC day at either bound.
+                    **({"published_after": after.isoformat()} if after else {}),
+                    **({"published_before": before.isoformat()} if before else {}),
+                },
             )
         return [
             SearchResult(

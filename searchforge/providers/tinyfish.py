@@ -6,6 +6,8 @@ adapter still normalises to the same five search fields and four page fields.
 
 from __future__ import annotations
 
+from datetime import date
+
 import httpx
 
 from searchforge.providers.base import PageContent, ProviderError, SearchResult
@@ -17,6 +19,7 @@ TINYFISH_FETCH_URL = "https://api.fetch.tinyfish.ai"
 
 class TinyFishProvider:
     name = "tinyfish"
+    supports_date_filter = True
 
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
@@ -25,7 +28,14 @@ class TinyFishProvider:
     def _headers(self) -> dict[str, str]:
         return {"X-API-Key": self._api_key, "Content-Type": "application/json"}
 
-    async def search(self, query: str, num_results: int) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        num_results: int,
+        *,
+        after: date | None = None,
+        before: date | None = None,
+    ) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await request_json(
                 client,
@@ -33,7 +43,11 @@ class TinyFishProvider:
                 provider=self.name,
                 headers=self._headers,
                 method="GET",
-                params={"query": query},
+                params={
+                    "query": query,
+                    **({"after_date": after.isoformat()} if after else {}),
+                    **({"before_date": before.isoformat()} if before else {}),
+                },
             )
         # No result-count parameter is documented, so the cap is applied here. The
         # slice keeps every arm at the same `num_results` the comparison asserts.

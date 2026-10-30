@@ -1,0 +1,47 @@
+# Preset: Exa's published search-RL harness, as closely as SearchForge can express it.
+#   uv run vf-eval @ configs/exa-replication.toml
+#
+# What Exa disclosed (see docs/research/page-capping-and-env-design.md):
+#   - search tool only, no page fetch; 5 results per call, each capped at 2,000 chars
+#   - at most 10 assistant messages per rollout; 2,048 generated tokens per turn
+#   - 32k context; SimpleQA-style grader; -0.25 context-overflow penalty
+#   - Qwen3-4B-Instruct-2507 trained on MuSiQue + HotpotQA, evaluated on SimpleQA
+#
+# What is assumed here, because it was not disclosed or does not map one-to-one:
+#   - Budget: 10 assistant messages map to `max_turns = 10` plus 9 tool calls, which
+#     leaves the tenth message for the answer when calls are issued one at a time
+#     (parallel calls stay refused, as in every SearchForge preset).
+#   - Grader: SearchForge's binary reference judge, not SimpleQA's three-way grader
+#     (correct / incorrect / not attempted). Accuracy is comparable; their
+#     "not attempted" rate is not reported here.
+#   - The SERP arm: Exa never named its SERP API or said how a 2,000-char snippet was
+#     built from Google's ~150-300-char ones. Here every arm gets the same
+#     2,000-char cap on whatever its provider returns, which is the fair version.
+#   - Questions: `hops_max = 1` keeps the 60 SimpleQA rows of tasks_v1; the policy
+#     model is the default below unless you pass `-m`.
+
+model = "deepseek/deepseek-v4-flash"
+
+[sampling]
+max_tokens = 2048
+
+[env.agent]
+max_turns = 10
+
+[env.agent.harness]
+id = "null"
+
+[env.agent.runtime]
+type = "docker"
+
+[env.taskset]
+id = "searchforge"
+providers = ["serper", "exa"]
+data_path = "searchforge/data/tasks_v1.jsonl"
+hops_max = 1
+
+[env.taskset.task.tools]
+enable_fetch = false
+num_results = 5
+max_excerpt_chars = 2000
+max_tool_calls = 9

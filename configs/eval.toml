@@ -25,3 +25,12 @@ id = "searchforge"
 # A list set here cannot be overridden by `--env.taskset.providers` on the same command
 # line (the CLI rejects the string). Edit this line, or drop `@ configs/eval.toml`.
 providers = ["serper", "exa"]
+
+[env.taskset.task.tools]
+# The defaults, written out so a preset diff shows exactly what it changes. Both caps
+# are applied in the tool server on normalised text, identically for every provider.
+enable_fetch = true
+max_page_chars = 8000
+max_excerpt_chars = 2000
+fetch_pagination = false
+max_tool_calls = 10

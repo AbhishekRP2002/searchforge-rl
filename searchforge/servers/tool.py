@@ -14,14 +14,17 @@ import os
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import verifiers.v1 as vf
 from dotenv import dotenv_values
+from pydantic import model_validator
 from verifiers.v1.utils.decorators import discover_decorated
 
+from searchforge.caps import cap_excerpts, cap_page, page_count, slice_page
 from searchforge.dates import check_window, parse_bound, parse_result_date, within
 from searchforge.providers.base import ProviderError, SearchProvider
 from searchforge.providers.exa import ExaProvider
@@ -84,6 +87,12 @@ RATE_LIMITED = (
     "SEARCH_PROVIDER_RATE_LIMITED: the provider remained rate-limited after "
     "retries. Answer with what you have."
 )
+
+
+PAGINATION_OFF = (
+    "Pagination is disabled for this task. Call web_fetch with a url only."
+)
+FETCH_DISABLED = "web_fetch is disabled for this task. Use web_search only."
 
 
 DATE_FILTER_OFF = (
@@ -150,6 +159,35 @@ class WebToolsetConfig(vf.ToolsetConfig):
     providers lack, not better retrieval. Off by default."""
     max_tool_calls: int = 10
 
+    enable_fetch: bool = True
+    """Whether `web_fetch` is advertised at all. Off reproduces a search-only
+    harness, which is what Exa's published experiment used: the model sees result
+    excerpts and nothing else (`configs/exa-replication.toml`)."""
+
+    max_page_chars: int | None = 8000
+    """Characters of fetched page text the model sees, head-kept, with a visible
+    `[truncated: showing N of M chars]` marker when anything was cut. Applied here
+    on the normalised text, never in an adapter, so every arm is cut by the same
+    code at the same number. `None` is uncapped.
+
+    Why 8,000: measured over 29 live fetches, 20 were at most 24,627 characters and
+    the rest jumped to 107k-162k, with a median rollout near 20k tokens. Eight
+    thousand characters (~2k tokens) keeps several fetches inside a 32k training
+    context, sits inside the 3k-50k range published search environments use, and
+    caps the bimodal tail that made every rollout truncate."""
+
+    max_excerpt_chars: int | None = 2000
+    """Characters per search-result excerpt, head-kept with an ellipsis. Matches
+    Exa's per-result limit. It rarely binds today (whole result lists measure
+    ~1.3k characters) and exists so no provider can return page-length excerpts
+    and win on volume. `None` is uncapped."""
+
+    fetch_pagination: bool = False
+    """Whether `web_fetch` takes a `page` argument. On, a long page is served in
+    `max_page_chars`-sized pages, each marked `page n of m`, and each page is one
+    provider call charged to the budget -- there is no cache yet, so the page is
+    re-fetched. Off, the argument is not advertised at all."""
+
     date_filter: DateFilterMode = "off"
     """Whether `web_search` takes optional `after`/`before` dates (YYYY-MM-DD).
 
@@ -188,6 +226,13 @@ class WebToolsetConfig(vf.ToolsetConfig):
     model may still *emit* parallel calls, and the ones beyond the first are
     refused with a message instead of being served.
     """
+
+
+    @model_validator(mode="after")
+    def _pagination_needs_a_page_size(self) -> WebToolsetConfig:
+        if self.fetch_pagination and self.max_page_chars is None:
+            raise ValueError("fetch_pagination needs max_page_chars, the page size")
+        return self
 
 
 def build_provider(config: WebToolsetConfig) -> SearchProvider:
@@ -242,22 +287,31 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
             return False
         return True
 
-    def register(self, mcp: MCPServer) -> None:
-        """Advertise exactly one `search` variant.
+    def _hidden_tools(self) -> set[str]:
+        """Method names left unregistered: the unused variant of each tool whose
+        schema depends on config, and `fetch` entirely when it is disabled."""
+        hidden = {"search" if self.config.date_filter != "off" else "search_dated"}
+        if not self.config.enable_fetch:
+            hidden |= {"fetch", "fetch_paged"}
+        else:
+            hidden.add("fetch" if self.config.fetch_pagination else "fetch_paged")
+        return hidden
 
-        `search` and `search_dated` are both named `search` for the model, and
-        the MCP server builds each schema from the method signature. Registering
-        only one keeps the date arguments out of the schema entirely when the
-        filter is off, so an `off` run is byte-identical to one from before the
-        knob existed.
+    def register(self, mcp: MCPServer) -> None:
+        """Advertise exactly one variant of each tool, or none of `fetch`.
+
+        `search`/`search_dated` are both named `search` for the model, and
+        `fetch`/`fetch_paged` both `fetch`; the MCP server builds each schema
+        from the method signature. Registering only one keeps optional arguments
+        out of the schema entirely when their knob is off, so a default run
+        advertises exactly what it did before the knobs existed.
 
         This repeats the base `Toolset.register` loop, which verifiers (0.4.0)
         still offers no public hook to filter, so `discover_decorated` is an
         internal import. The real-server schema test fails if either changes.
         """
-        hidden = "search" if self.config.date_filter != "off" else "search_dated"
         for fn in discover_decorated(self, "tool"):
-            if fn.__name__ == hidden:
+            if fn.__name__ in self._hidden_tools():
                 continue
             mcp.add_tool(
                 self._with_state(fn),
@@ -319,6 +373,7 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
                 query[:80],
             )
             return _recoverable_failure(exc)
+        results = cap_excerpts(results, self.config.max_excerpt_chars)
         dropped = 0
         if dated and not native:
             kept = [r for r in results if within(parse_result_date(r.date), after, before)]
@@ -347,6 +402,22 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
     @vf.tool
     async def fetch(self, url: str) -> str:
         """Retrieve the readable text of one web page by its URL."""
+        return await self._fetch(url, None)
+
+    @vf.tool(name="fetch")
+    async def fetch_paged(self, url: str, page: int = 1) -> str:
+        """Retrieve the readable text of one web page by its URL. Long pages are
+        split into numbered pages; pass `page` (1, 2, ...) to read further."""
+        if not self.config.fetch_pagination:
+            # Unreachable through MCP (`register` hides it); guards direct callers.
+            return PAGINATION_OFF
+        if page < 1:
+            return f"page must be 1 or greater, got {page}."
+        return await self._fetch(url, page)
+
+    async def _fetch(self, url: str, page_number: int | None) -> str:
+        if not self.config.enable_fetch:
+            return FETCH_DISABLED
         if not url.startswith(("http://", "https://")):
             return f"Not a fetchable URL: {url!r}. Pass an http or https URL."
         if not self._claim():
@@ -368,21 +439,34 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
                 url[:120],
             )
             return _recoverable_failure(exc)
-        rendered = render_page(page)
-        # `chars` is the load-bearing field: pages are uncapped by decision, and one
-        # 161,937-char fetch consumed ~16x the spec's whole sequence budget. This is
-        # the number that makes that visible while it happens instead of afterwards.
+        raw = len(page.text)
+        limit = self.config.max_page_chars
+        if page_number is None:
+            text = cap_page(page.text, limit)
+        else:
+            assert limit is not None  # the config validator guarantees a page size
+            text = slice_page(page.text, limit, page_number)
+            if text is None:
+                return (
+                    f"{url} has {page_count(raw, limit)} page(s); "
+                    f"page {page_number} does not exist."
+                )
+        rendered = render_page(replace(page, text=text))
+        # `raw` against `chars` is the load-bearing pair: before the cap, one
+        # 161,937-char fetch consumed ~16x a 4k sequence budget. Both are logged so
+        # the cap's bite is visible per provider while the run happens.
         logger.info(
-            "fetch provider=%s call=%d/%d chars=%d ms=%.0f url=%s",
+            "fetch provider=%s call=%d/%d raw=%d chars=%d page=%s ms=%.0f url=%s",
             self.config.provider,
             self._calls,
             self.config.max_tool_calls,
+            raw,
             len(rendered),
+            page_number,
             (time.perf_counter() - started) * 1000,
             url[:120],
         )
         return rendered
-
 
 if __name__ == "__main__":
     configure_logging()

@@ -11,10 +11,7 @@ SYSTEM_TEMPLATE = dedent("""
     </context>
 
     <tools>
-    - Use `web_search` to find pages relevant to a query.
-    - Use `web_fetch` to retrieve the readable text of a page by its URL.
-    - The tool server allows {max_tool_calls} provider-backed calls in total across
-    `web_search` and `web_fetch`. After that, additional calls return no new evidence.{date_filter_note}
+    {tool_lines}{date_filter_note}
     </tools>
 
     <instructions>
@@ -35,6 +32,30 @@ SYSTEM_TEMPLATE = dedent("""
     as they appeared in the tool results. Do not include unsupported URLs.
     </final_answer>
     """).strip()
+
+FETCH_TOOL_LINES = """\
+- Use `web_search` to find pages relevant to a query.
+- Use `web_fetch` to retrieve the readable text of a page by its URL.
+- The tool server allows {max_tool_calls} provider-backed calls in total across
+`web_search` and `web_fetch`. After that, additional calls return no new evidence."""
+
+SEARCH_ONLY_TOOL_LINES = """\
+- Use `web_search` to find pages relevant to a query. Results show excerpts only;
+pages cannot be opened.
+- The tool server allows {max_tool_calls} provider-backed `web_search` calls. After
+that, additional calls return no new evidence."""
+"""With fetch disabled the prompt must not name a tool the model does not have.
+
+Neither variant states the page or excerpt caps. A cut page ends in a visible
+`[truncated: ...]` or `[page n of m ...]` marker at the moment it matters, and a
+paginated `web_fetch` advertises its `page` argument in its own schema, so a
+prompt line would repeat what the tool result already says."""
+
+
+def tool_lines(max_tool_calls: int, enable_fetch: bool) -> str:
+    template = FETCH_TOOL_LINES if enable_fetch else SEARCH_ONLY_TOOL_LINES
+    return template.format(max_tool_calls=max_tool_calls)
+
 
 DATE_FILTER_NOTE = (
     "\n- `web_search` optionally takes `after` and `before` dates (YYYY-MM-DD) to "

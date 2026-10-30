@@ -10,7 +10,7 @@ from pydantic import Field
 
 from searchforge.evidence import answer_present, grounded_fraction, urls_in_text
 from searchforge.judge import SearchForgeJudgeConfig
-from searchforge.prompts import DATE_FILTER_NOTE, SYSTEM_TEMPLATE
+from searchforge.prompts import DATE_FILTER_NOTE, SYSTEM_TEMPLATE, tool_lines
 from searchforge.servers.tool import (
     PROVIDER_KEY_ENV,
     WebToolset,
@@ -18,6 +18,7 @@ from searchforge.servers.tool import (
     check_date_filter,
 )
 from searchforge.trace_reader import (
+    fetch_page_stats,
     native_search_citations,
     retrieved_urls,
     tool_call_count,
@@ -130,6 +131,23 @@ class SearchForgeTask(vf.Task[SearchForgeData, vf.State, SearchForgeTaskConfig])
         return float(tool_call_counts(trace).get("web_fetch", 0))
 
     @vf.metric
+    async def fetch_chars_raw(self, trace: vf.Trace) -> float:
+        """Mean raw length of the pages this episode fetched, before any cap.
+
+        A mean, not a sum, so it describes the provider's pages rather than how
+        many the agent chose to open; multiply by `num_fetch_calls` for volume.
+        Zero when nothing was fetched."""
+        stats = fetch_page_stats(trace)
+        return sum(raw for raw, _ in stats) / len(stats) if stats else 0.0
+
+    @vf.metric
+    async def fetch_truncated(self, trace: vf.Trace) -> float:
+        """Fetches where the model saw less than the whole page. Per provider,
+        this is how often the cap bites -- a provider returning longer pages
+        bites more, which is a property of its fetch, not a bias of the cap."""
+        return float(sum(truncated for _, truncated in fetch_page_stats(trace)))
+
+    @vf.metric
     async def tokens_consumed(self, trace: vf.Trace) -> float:
         # verifiers 0.4 counts new input once per call plus every generated token
         # (0.3 summed final sequence lengths). On this taskset's single linear branch
@@ -191,7 +209,9 @@ class SearchForgeTaskset(
                         idx=idx,
                         provider=provider,
                         system_prompt=SYSTEM_TEMPLATE.format(
-                            max_tool_calls=config.tools.max_tool_calls,
+                            tool_lines=tool_lines(
+                                config.tools.max_tool_calls, config.tools.enable_fetch
+                            ),
                             current_date=current_date,
                             date_filter_note=(
                                 DATE_FILTER_NOTE

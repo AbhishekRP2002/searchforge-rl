@@ -1,0 +1,30 @@
+# Preset: a budget that fits a 4k-8k token sequence.
+#   uv run vf-eval @ configs/small-context.toml
+#
+# For training small models at short `seq_len`, where the default 8,000-char pages
+# (~2k tokens each) would overflow after one or two fetches. Worst case here: four
+# calls of at most 2,000 page chars or 5 x 500 excerpt chars each, so tool output
+# stays under ~10k chars (~2.5k tokens) plus the prompt and the answer.
+#
+# Caps this tight change what the agent can read, so compare arms within this
+# preset only, never against a default-config run.
+
+model = "deepseek/deepseek-v4-flash"
+
+[sampling]
+max_tokens = 1024
+
+[env.agent.harness]
+id = "null"
+
+[env.agent.runtime]
+type = "docker"
+
+[env.taskset]
+id = "searchforge"
+providers = ["serper", "exa"]
+
+[env.taskset.task.tools]
+max_page_chars = 2000
+max_excerpt_chars = 500
+max_tool_calls = 4

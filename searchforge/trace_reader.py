@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import verifiers.v1 as vf
 
+from searchforge.caps import parse_fetch_marker
 from searchforge.evidence import urls_in_text
 
 NATIVE_SEARCH_ITEM_TYPES = {"web_search_call", "web_search_tool_result"}
@@ -39,6 +40,29 @@ def tool_call_counts(trace: vf.Trace) -> dict[str, int]:
         name = message.name or "unknown"
         counts[name] = counts.get(name, 0) + 1
     return counts
+
+
+def fetch_page_stats(trace: vf.Trace) -> list[tuple[int, bool]]:
+    """(raw page length, truncated) for every fetch that returned a page.
+
+    Read back from what the model saw, since the tool server has no channel to
+    report through: a capped or paged result carries a marker with the raw
+    length; an uncut one is the page body after `render_page`'s header block.
+    Refusals and failures ("budget exhausted", "not a fetchable URL", provider
+    errors) are one-paragraph messages with no body, and are skipped.
+    """
+    stats: list[tuple[int, bool]] = []
+    for message in trace.tool_messages:
+        if message.name != "web_fetch":
+            continue
+        content = getattr(message, "content", None)
+        if not isinstance(content, str):
+            continue
+        if marked := parse_fetch_marker(content):
+            stats.append(marked)
+        elif "\n\n" in content:
+            stats.append((len(content.split("\n\n", 1)[1]), False))
+    return stats
 
 
 def native_search_citations(trace: vf.Trace) -> list[str]:

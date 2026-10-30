@@ -124,10 +124,9 @@ assumption.
 many cells, and the value was never "swap everything at once" — it is "swap one
 thing and get a comparison that holds". That puts the weight on the environment
 refusing to render a comparison whose arms differ in more than one place.
-Today's gap: a serialized trace records the task row and the agent config
-(model, harness, runtime, sampling) but no toolset or judge configuration, so
-`scripts/matrix.py` cannot assert a fingerprint yet. The full resolved config
-does exist per run, in `outputs/<run>/configs/resolved/eval.json`. With one knob
+`searchforge-report` enforces this: it fingerprints each arm from the run's
+resolved config and its traces, and refuses to compare arms that differ in
+anything but the provider unless told to, by name. With one knob
 that is a small risk. With six it is the whole ballgame.
 
 ## The task mixture
@@ -296,25 +295,54 @@ uv run --env-file .env vf-eval searchforge \
   -n 8 -r 1 -c 1 --no-push
 ```
 
-Validate the resulting real trace file:
+Gate it, fail-closed (exit 1 on any validity error or warning):
 
 ```bash
-uv run python scripts/live_gate.py \
-  outputs/<run>/traces.jsonl serper exa
+uv run searchforge-report outputs/<run> --gate --expect serper,exa
 ```
 
-The gate checks both provider arms, MCP advertisement, actual use of both tools,
-judge execution, successful trace serialization, zero native-search bypasses and
-classified failures. Docker/network-policy behavior must also be retained in the
-run logs; configuration alone is not proof of enforcement.
+The gate checks that every expected provider arm is present, `web_search` was
+advertised and every advertised tool was actually called, the judge ran on every
+scored trace, no native-search bypass happened, and every failure is classified
+(failure rate above `--max-failure-rate`, default 0, also fails). Docker/network
+policy behaviour must also be retained in the run logs; configuration alone is not
+proof of enforcement.
 
-## Matrix analysis
+## Reading the results
 
-`scripts/matrix.py` reads the Verifiers v1 serialized shape, including
-`rewards.<name>.score`, `task.data.source_id`, metrics and errors:
+One command turns finished runs into a verdict:
 
 ```bash
-uv run python scripts/matrix.py \
-  model-a=serper=outputs/serper/traces.jsonl \
-  model-a=exa=outputs/exa/traces.jsonl
+uv run searchforge-report outputs/<run>
 ```
+
+A single run already holds every provider you passed it (each question runs on
+each provider), so one run directory is usually all you need. Pass several to
+compare runs made separately, e.g. a Monday Serper run and a Tuesday Exa run.
+
+The report has five parts:
+
+1. **Verdict** — one line per provider pair, in plain numbers:
+   `exa vs serper: +4.0 pts (95% CI -1.2 to +9.2), p=0.130 (Holm 0.130),
+   n=300 pairs -- not significant`. Delta is accuracy on the *same* questions;
+   p is the exact McNemar test on the questions where the two arms disagree;
+   Holm corrects for how many pairs were compared. Under 30 pairs it says
+   "too few pairs to conclude" instead of guessing.
+2. **Validity** — native-search bypasses, missing judge runs, unused tools,
+   unclassified or excess failures. An arm with an error is shown but left out
+   of every comparison.
+3. **Comparability** — every arm gets a fingerprint of its settings minus the
+   provider: tools, judge, prompt (including the date it named), dataset
+   contents, model, sampling, harness and verifiers version. If two arms differ
+   in anything else, the report **refuses** (exit 2) and lists the exact
+   settings. `--allow-diff trace.model` accepts a named difference and stamps
+   the report *NOT A PROVIDER-ONLY COMPARISON*.
+4. **Arms** — accuracy with a 95% interval, how often the answer was in the
+   tool results at all, the *extraction gap* (found but not used), citation
+   rates, calls, tokens, time and failures per provider.
+5. **Slices** — the same, broken down by source benchmark, hop count, answer
+   type and recency. These are exploratory; small cells are marked.
+
+Useful options: `--baseline serper` (every arm against one, instead of all
+pairs; by default Serper is the baseline side of any pair it is in),
+`--format json` for machine-readable output, `--out report.md`.

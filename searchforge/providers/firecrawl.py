@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import httpx
 
+from searchforge.dates import google_tbs
 from searchforge.providers.base import PageContent, ProviderError, SearchResult
 from searchforge.providers.transport import TIMEOUT, request_json
 
@@ -13,6 +16,7 @@ FIRECRAWL_SCRAPE_URL = "https://api.firecrawl.dev/v2/scrape"
 
 class FirecrawlProvider:
     name = "firecrawl"
+    supports_date_filter = True
 
     def __init__(self, api_key: str) -> None:
         self._api_key = api_key
@@ -24,14 +28,27 @@ class FirecrawlProvider:
             "Content-Type": "application/json",
         }
 
-    async def search(self, query: str, num_results: int) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        num_results: int,
+        *,
+        after: date | None = None,
+        before: date | None = None,
+    ) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await request_json(
                 client,
                 FIRECRAWL_SEARCH_URL,
                 provider=self.name,
                 headers=self._headers,
-                payload={"query": query, "limit": num_results, "sources": ["web"]},
+                payload={
+                    "query": query,
+                    "limit": num_results,
+                    "sources": ["web"],
+                    # Firecrawl forwards Google's `tbs` unchanged, as Serper does.
+                    **({"tbs": google_tbs(after, before)} if after or before else {}),
+                },
             )
         data = response.json().get("data") or {}
         # v2 groups hits by source (`data.web`); a bare list is the v1 shape.

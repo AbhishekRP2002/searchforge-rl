@@ -1,10 +1,14 @@
 """Serper adapter. Called with Serper's ordinary default settings — no `tbs`
-recency filter, no cache controls. See spec section 5, "Provider defaults"."""
+recency filter unless the agent asks for a date window, no cache controls. See
+spec section 5, "Provider defaults"."""
 
 from __future__ import annotations
 
+from datetime import date
+
 import httpx
 
+from searchforge.dates import google_tbs
 from searchforge.providers.base import PageContent, SearchResult
 from searchforge.providers.transport import TIMEOUT, request_json
 
@@ -14,6 +18,7 @@ SERPER_SCRAPE_URL = "https://scrape.serper.dev"
 
 class SerperProvider:
     name = "serper"
+    supports_date_filter = True
 
     def __init__(self, api_key: str, *, include_answer_box: bool = False) -> None:
         self._api_key = api_key
@@ -23,14 +28,25 @@ class SerperProvider:
     def _headers(self) -> dict[str, str]:
         return {"X-API-KEY": self._api_key, "Content-Type": "application/json"}
 
-    async def search(self, query: str, num_results: int) -> list[SearchResult]:
+    async def search(
+        self,
+        query: str,
+        num_results: int,
+        *,
+        after: date | None = None,
+        before: date | None = None,
+    ) -> list[SearchResult]:
         async with httpx.AsyncClient(timeout=TIMEOUT) as client:
             response = await request_json(
                 client,
                 SERPER_SEARCH_URL,
                 provider=self.name,
                 headers=self._headers,
-                payload={"q": query, "num": num_results},
+                payload={
+                    "q": query,
+                    "num": num_results,
+                    **({"tbs": google_tbs(after, before)} if after or before else {}),
+                },
             )
         payload = response.json()
 

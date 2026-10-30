@@ -54,6 +54,8 @@ project exists to measure. It is not the only one, and more will follow.
 | --- | --- | --- |
 | `env.taskset.providers` | Search backend, and the comparison arms | **Seven shipped** |
 | `env.taskset.task.tools.*` | Result count, rendering, call budget, answer-box policy | Shipped |
+| `env.taskset.task.tools.max_page_chars` / `max_excerpt_chars` | Page cap (8,000) and per-result excerpt cap (2,000); `null` uncaps | Shipped |
+| `env.taskset.task.tools.fetch_pagination` / `enable_fetch` | `web_fetch(url, page=n)`; search-only harness | Shipped, pagination off, fetch on |
 | `env.taskset.task.tools.date_filter` | `web_search` date window: `off`, `native`, `emulated` | Shipped, off by default |
 | `env.taskset.current_date` | The "today" stated in the system prompt; pin it to rerun old comparisons | Shipped |
 | `env.taskset.task.judges` | Judge model and prompt | Shipped |
@@ -106,7 +108,8 @@ against a reference `seq_len` of 4,096. Every rollout truncates, every sample
 takes the −0.25 penalty, and a group with identical rewards yields no GRPO
 advantage: full GPU cost, no gradient. A cap has to be chosen, and it has to
 apply identically to every arm or it becomes a hidden provider advantage — which
-is exactly the flaw this project exists to catch.
+is exactly the flaw this project exists to catch. The cap is now 8,000 characters
+per page (see Design defaults); training still needs a 32k sequence, as Exa used.
 
 **Interpretability needs no new instrumentation.** The trace already holds every
 query the agent issued, in order, with its results and per-token trainable
@@ -250,11 +253,31 @@ into traces. `PRIME_API_KEY` is used by the documented model/judge endpoint.
   across arms of one comparison.
 - The system prompt states today's date (`current_date`, default: the real date
   at load), so time-relative questions have an anchor.
-- There are deliberately no snippet or page character caps. Token and tool-result
-  behavior is measured before any truncation policy is chosen.
+- Fetched pages are cut at 8,000 characters and search excerpts at 2,000, keeping
+  the head, in the tool server after normalisation — the same code and number for
+  every provider. A cut page ends in `[truncated: showing N of M chars]`. 8,000
+  comes from the measured fetch sizes above: it keeps several fetches inside a 32k
+  context and removes the 107k–162k tail. Per-episode `fetch_chars_raw` and
+  `fetch_truncated` metrics show how often the cap bites per provider.
 - The system prompt states the enforced shared tool-call budget. MCP injects tool
   descriptions and argument schemas at runtime, so the prompt does not duplicate
   them.
+
+## Presets
+
+One flag switches the whole harness. Each file states what it changes.
+
+| Preset | What it is |
+| --- | --- |
+| `configs/eval.toml` | Default: search + fetch, 8,000-char pages, 10 calls |
+| `configs/exa-replication.toml` | Exa's published setup: search only, 5 × 2,000-char results, 10 turns / 9 calls, SimpleQA rows. Its header lists what Exa disclosed and what is assumed |
+| `configs/small-context.toml` | 2,000-char pages, 500-char excerpts, 4 calls — for 4k–8k sequences |
+
+```bash
+uv run vf-eval @ configs/exa-replication.toml --dry-run --no-push
+```
+
+Compare arms within one preset only: a preset changes what the agent can read.
 
 ## Offline verification
 

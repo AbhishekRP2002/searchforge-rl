@@ -14,11 +14,15 @@ import os
 import sys
 import time
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 import verifiers.v1 as vf
 from dotenv import dotenv_values
+from verifiers.v1.utils.decorators import discover_decorated
 
+from searchforge.dates import check_window, parse_bound, parse_result_date, within
 from searchforge.providers.base import ProviderError, SearchProvider
 from searchforge.providers.exa import ExaProvider
 from searchforge.providers.firecrawl import FirecrawlProvider
@@ -28,6 +32,9 @@ from searchforge.providers.serper import SerperProvider
 from searchforge.providers.tavily import TavilyProvider
 from searchforge.providers.tinyfish import TinyFishProvider
 from searchforge.render import render_page, render_results
+
+if TYPE_CHECKING:
+    from mcp.server.fastmcp import FastMCP
 
 PROVIDERS: dict[str, tuple[str, Callable[[str], SearchProvider]]] = {
     "serper": ("SERPER_API_KEY", SerperProvider),
@@ -79,10 +86,53 @@ RATE_LIMITED = (
 )
 
 
+DATE_FILTER_OFF = (
+    "Date filtering is disabled for this task. Call web_search with a query only."
+)
+
+
+def _window_header(after: date | None, before: date | None, mode: str) -> str:
+    """One line naming the window and how it was applied. It lands in the tool
+    message, so the trace records which mode served each dated call."""
+    low = after.isoformat() if after else "any"
+    high = before.isoformat() if before else "any"
+    return f"Date filter ({mode}): published {low} to {high}"
+
+
 def _recoverable_failure(exc: ProviderError) -> str:
     if not exc.retryable:
         raise exc
     return RATE_LIMITED if exc.status == 429 else UNAVAILABLE
+
+
+DateFilterMode = Literal["off", "native", "emulated"]
+
+
+def check_date_filter(provider: str, mode: DateFilterMode) -> None:
+    """Refuse a native date filter on a provider that cannot serve one.
+
+    Called at taskset load and again when the tool server builds a provider, so a
+    misconfigured comparison fails before its first rollout rather than letting
+    one arm quietly search without the window every other arm applies.
+    """
+    if mode != "native":
+        return
+    spec = PROVIDERS.get(provider)
+    if spec is None:
+        raise ValueError(
+            f"unknown provider {provider!r}; expected one of {sorted(PROVIDERS)}"
+        )
+    if not getattr(spec[1], "supports_date_filter", False):
+        native = sorted(
+            name
+            for name, (_, construct) in PROVIDERS.items()
+            if getattr(construct, "supports_date_filter", False)
+        )
+        raise ValueError(
+            f"date_filter='native' but {provider!r} has no native filter for both "
+            f"bounds. Use date_filter='emulated' for every arm, or compare only "
+            f"providers that support it: {native}"
+        )
 
 
 class WebToolsetConfig(vf.ToolsetConfig):
@@ -99,6 +149,23 @@ class WebToolsetConfig(vf.ToolsetConfig):
     """Serper's answerBox is Google's own direct answer — a capability other
     providers lack, not better retrieval. Off by default."""
     max_tool_calls: int = 10
+
+    date_filter: DateFilterMode = "off"
+    """Whether `web_search` takes optional `after`/`before` dates (YYYY-MM-DD).
+
+    - `off`: the tool advertises `query` only, exactly as before this knob existed.
+    - `native`: each provider applies the window with its own documented filter.
+      A provider without one is refused at load (`check_date_filter`); it is never
+      silently searched unfiltered.
+    - `emulated`: no provider receives the dates. Every arm's results are filtered
+      after the fact on their own `date` field, the same code for every provider.
+      An undated or unreadable date is dropped, so an arm whose provider dates
+      fewer results returns fewer hits -- that is the cost of identical treatment,
+      and it shows up in the logs as `dropped=`.
+
+    Mixing modes across arms of one comparison is a different experiment, not a
+    provider comparison.
+    """
 
     allow_parallel_tool_calls: bool = False
     """Whether the agent may have more than one tool call in flight at once.
@@ -129,6 +196,7 @@ def build_provider(config: WebToolsetConfig) -> SearchProvider:
         raise ValueError(
             f"unknown provider {config.provider!r}; expected one of {sorted(PROVIDERS)}"
         )
+    check_date_filter(config.provider, config.date_filter)
     variable, construct = spec
     key = os.environ.get(variable)
     if not key and config.env_file:
@@ -174,22 +242,69 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
             return False
         return True
 
+    def register(self, mcp: FastMCP) -> None:
+        """Advertise exactly one `search` variant.
+
+        `search` and `search_dated` are both named `search` for the model, and
+        FastMCP builds each schema from the method signature. Registering only one
+        keeps the date arguments out of the schema entirely when the filter is off,
+        so an `off` run is byte-identical to one from before the knob existed.
+        """
+        hidden = "search" if self.config.date_filter != "off" else "search_dated"
+        for fn in discover_decorated(self, "tool"):
+            if fn.__name__ == hidden:
+                continue
+            mcp.add_tool(
+                self._with_state(fn),
+                name=getattr(fn, "tool_name", None) or fn.__name__,
+                description=(fn.__doc__ or "").strip() or None,
+            )
+
     @vf.tool
     async def search(self, query: str) -> str:
         """Search the web for a query. Returns ranked results with titles, URLs
         and text excerpts."""
+        return await self._search(query, None, None)
+
+    @vf.tool(name="search")
+    async def search_dated(
+        self, query: str, after: str | None = None, before: str | None = None
+    ) -> str:
+        """Search the web for a query. Returns ranked results with titles, URLs
+        and text excerpts. Optionally restrict results to pages published on or
+        after `after` and/or on or before `before`, each a date in YYYY-MM-DD form."""
+        if self.config.date_filter == "off":
+            # Unreachable through MCP (`register` hides it); guards direct callers.
+            return DATE_FILTER_OFF
+        start, problem = parse_bound(after, "after")
+        if problem:
+            return problem
+        end, problem = parse_bound(before, "before")
+        if problem:
+            return problem
+        if problem := check_window(start, end):
+            return problem
+        return await self._search(query, start, end)
+
+    async def _search(self, query: str, after: date | None, before: date | None) -> str:
         if not self._claim():
             logger.info("search refused: parallel tool calls are disabled")
             return PARALLEL_REFUSED
         if not self._spend():
             logger.info("search budget_exhausted after %d calls", self._calls)
             return BUDGET_EXHAUSTED
+        dated = after is not None or before is not None
+        native = dated and self.config.date_filter == "native"
         started = time.perf_counter()
         try:
             async with self._in_flight:
-                results = await build_provider(self.config).search(
-                    query, self.config.num_results
-                )
+                provider = build_provider(self.config)
+                if native:
+                    results = await provider.search(
+                        query, self.config.num_results, after=after, before=before
+                    )
+                else:
+                    results = await provider.search(query, self.config.num_results)
         except ProviderError as exc:
             logger.warning(
                 "search provider=%s status=%s retryable=%s query=%r",
@@ -199,15 +314,27 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
                 query[:80],
             )
             return _recoverable_failure(exc)
+        dropped = 0
+        if dated and not native:
+            kept = [r for r in results if within(parse_result_date(r.date), after, before)]
+            dropped = len(results) - len(kept)
+            results = kept
         rendered = render_results(results, self.config.result_format)
+        if dated:
+            rendered = f"{_window_header(after, before, self.config.date_filter)}\n\n{rendered}"
         logger.info(
-            "search provider=%s call=%d/%d hits=%d chars=%d ms=%.0f query=%r",
+            "search provider=%s call=%d/%d hits=%d chars=%d ms=%.0f date_filter=%s "
+            "after=%s before=%s dropped=%d query=%r",
             self.config.provider,
             self._calls,
             self.config.max_tool_calls,
             len(results),
             len(rendered),
             (time.perf_counter() - started) * 1000,
+            self.config.date_filter if dated else "none",
+            after,
+            before,
+            dropped,
             query[:80],
         )
         return rendered

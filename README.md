@@ -54,6 +54,8 @@ project exists to measure. It is not the only one, and more will follow.
 | --- | --- | --- |
 | `env.taskset.providers` | Search backend, and the comparison arms | **Seven shipped** |
 | `env.taskset.task.tools.*` | Result count, rendering, call budget, answer-box policy | Shipped |
+| `env.taskset.task.tools.date_filter` | `web_search` date window: `off`, `native`, `emulated` | Shipped, off by default |
+| `env.taskset.current_date` | The "today" stated in the system prompt; pin it to rerun old comparisons | Shipped |
 | `env.taskset.task.judges` | Judge model and prompt | Shipped |
 | `env.taskset.task.rewards` | Your reward by import path; re-weight ours | Shipped |
 | `env.taskset.task.metrics` | Diagnostics, same mechanism | Shipped |
@@ -237,6 +239,15 @@ into traces. `PRIME_API_KEY` is used by the documented model/judge endpoint.
 - Provider features that answer the question for the agent stay off: Serper's
   `answerBox`, Tavily's `include_answer`, Exa's `deep` modes and Parallel's
   `objective` are capability asymmetries, not retrieval quality.
+- The `web_search` date window (`date_filter`) is off by default, and when off
+  the tool schema has no date arguments at all. `native` passes the window to
+  each provider's own filter and refuses, at load, any provider that cannot
+  filter both bounds (Parallel has a start date only). `emulated` sends no dates
+  to any provider and filters every arm's results on their own `date` field;
+  undated results are dropped, identically for every arm. Never mix modes
+  across arms of one comparison.
+- The system prompt states today's date (`current_date`, default: the real date
+  at load), so time-relative questions have an anchor.
 - There are deliberately no snippet or page character caps. Token and tool-result
   behavior is measured before any truncation policy is chosen.
 - The system prompt states the enforced shared tool-call budget. MCP injects tool

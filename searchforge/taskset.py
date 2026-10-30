@@ -1,6 +1,7 @@
 """SearchForge taskset: web research tasks scored by a reference judge."""
 
 import json
+from datetime import date
 from itertools import product
 from pathlib import Path
 
@@ -9,8 +10,13 @@ from pydantic import Field
 
 from searchforge.evidence import answer_present, grounded_fraction, urls_in_text
 from searchforge.judge import SearchForgeJudgeConfig
-from searchforge.prompts import SYSTEM_TEMPLATE
-from searchforge.servers.tool import PROVIDER_KEY_ENV, WebToolset, WebToolsetConfig
+from searchforge.prompts import DATE_FILTER_NOTE, SYSTEM_TEMPLATE
+from searchforge.servers.tool import (
+    PROVIDER_KEY_ENV,
+    WebToolset,
+    WebToolsetConfig,
+    check_date_filter,
+)
 from searchforge.trace_reader import (
     native_search_citations,
     retrieved_urls,
@@ -140,6 +146,11 @@ class SearchForgeConfig(vf.TasksetConfig):
     """Cross-product: every question runs on every provider listed."""
     hops_min: int = 1
     hops_max: int = 99
+    current_date: date | None = None
+    """The date the system prompt calls today. None resolves to the real date at
+    load. Pin it to rerun an old comparison with the prompt it actually had; the
+    resolved value is written into every task's system prompt, so the trace
+    records it either way."""
     task: SearchForgeTaskConfig = Field(  # pyright: ignore[reportIncompatibleVariableOverride]
         default_factory=SearchForgeTaskConfig
     )
@@ -154,6 +165,9 @@ class SearchForgeTaskset(
             raise ValueError(
                 f"unknown provider(s) {unknown}; expected {sorted(PROVIDER_KEY_ENV)}"
             )
+        for provider in self.config.providers:
+            check_date_filter(provider, self.config.task.tools.date_filter)
+        current_date = (self.config.current_date or date.today()).isoformat()
         rows = [
             row
             for row in load_rows(self.config.data_path)
@@ -174,7 +188,13 @@ class SearchForgeTaskset(
                         idx=idx,
                         provider=provider,
                         system_prompt=SYSTEM_TEMPLATE.format(
-                            max_tool_calls=config.tools.max_tool_calls
+                            max_tool_calls=config.tools.max_tool_calls,
+                            current_date=current_date,
+                            date_filter_note=(
+                                DATE_FILTER_NOTE
+                                if config.tools.date_filter != "off"
+                                else ""
+                            ),
                         ),
                         prompt=row["question"],
                         **row,

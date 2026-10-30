@@ -6,11 +6,15 @@ SYSTEM_TEMPLATE = dedent("""
     returned by the provided web tools.
     </role>
 
+    <context>
+    Today's date is {current_date}.
+    </context>
+
     <tools>
     - Use `web_search` to find pages relevant to a query.
     - Use `web_fetch` to retrieve the readable text of a page by its URL.
     - The tool server allows {max_tool_calls} provider-backed calls in total across
-    `web_search` and `web_fetch`. After that, additional calls return no new evidence.
+    `web_search` and `web_fetch`. After that, additional calls return no new evidence.{date_filter_note}
     </tools>
 
     <instructions>
@@ -31,6 +35,13 @@ SYSTEM_TEMPLATE = dedent("""
     as they appeared in the tool results. Do not include unsupported URLs.
     </final_answer>
     """).strip()
+
+DATE_FILTER_NOTE = (
+    "\n- `web_search` optionally takes `after` and `before` dates (YYYY-MM-DD) to "
+    "restrict results by publication date."
+)
+"""Appended to the tools section only when the filter is on, so an `off` run's
+prompt names no capability the tool does not have."""
 
 
 JUDGE_PROMPT = """\

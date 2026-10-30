@@ -270,4 +270,288 @@ the project to be useful to others. **P2** is good to have.
 
 ---
 
-<!-- PART3 -->
+## 3. Outside landscape
+
+*Sources were checked in October 2026, from repos, papers and official docs.
+"(unverified)" marks claims I could not confirm from a primary source.*
+
+### 3.1 Environment frameworks: how each one defines an environment
+
+| Framework | How an environment is defined | Served as | Sandboxing | Search-relevant |
+|---|---|---|---|---|
+| [Gymnasium](https://github.com/Farama-Foundation/Gymnasium) | `reset() → obs`, `step(a) → obs, reward, terminated, truncated, info` | in-process | none | The shape most LLM environment APIs copy |
+| [PettingZoo](https://github.com/Farama-Foundation/PettingZoo) | Multi-agent Gym (turn-based or parallel) | in-process | none | — |
+| [verifiers](https://github.com/PrimeIntellect-ai/verifiers) (what SearchForge uses) | v1: `Taskset.load() → Task` objects. A Task has `@vf.reward` and `@vf.metric` methods scored on a `Trace`. A **Harness** is where the model runs (null, bash, Claude Code, Codex), and Toolsets are MCP servers. | **ZMQ + msgpack env server** (`verifiers/v1/serve`, confirmed in 0.3.1). Model traffic goes through an interception server. | subprocess, docker (proxy-enforced network policy), Prime sandboxes, Modal | Ships `wiki_search` and a `web_search_interception` example. **0.4.0 is out (Oct 12 2026); SearchForge pins 0.3.1** |
+| [Environments Hub](https://app.primeintellect.ai/dashboard/environments) / [prime-environments](https://github.com/PrimeIntellect-ai/prime-environments) | Published verifiers packages; `prime env push`, `prime eval run owner/env` | Hub registry | via verifiers | Already lists `browsecomp_plus`, `simpleqa_verified_2`, `search_r1_ish`, `hle_web_py`, `deep_consult` |
+| [prime-rl](https://github.com/PrimeIntellect-ai/prime-rl) | Consumes verifiers envs directly | Async trainer (FSDP2) / inference (vLLM) split, `max_off_policy_steps` | — | Wiki Search multi-turn example |
+| [NeMo-Gym](https://github.com/NVIDIA-NeMo/Gym) | Dataset (JSONL) + agent + **resources server** (`seed_session`, tool endpoints, `verify() → reward`) | **3 FastAPI services**: model, agent, resources | Docker, Daytona, ECS, Apptainer, … | **Closest overlap**: `google_search`, `tavily_search` (LLM judge), `browsecomp_advanced_harness`, `deepsearchqa`, `widesearch` |
+| [OpenEnv](https://github.com/meta-pytorch/OpenEnv) (Meta + HF) | Gym-style `reset/step/state` | **WebSocket**. Each environment is a Docker image you can push to HF Spaces; MCP tools at `/mcp` | Docker / HF Spaces | Hosts BrowserGym. Used by TRL, SkyRL, ART, Unsloth. Marked "early development" |
+| [TRL](https://github.com/huggingface/trl) | `GRPOTrainer(environment_factory=Env)`: public methods with docstrings become tools; `rollout_func` is the escape hatch | in-process or OpenEnv | via OpenEnv/Harbor | — |
+| [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) | Subclass `AgentInstanceBase` with async `reset`/`step` → reward, feedback text, done | in-process, on Ray | none | — |
+| [verl](https://github.com/volcengine/verl) | `AgentLoopBase.run()`; tools as `BaseTool` in a YAML registry; `rollout.mode=async` | in-process, on Ray | Sandbox Fusion (code) | Search-R1 recipe built in |
+| [SkyRL / SkyRL-Gym](https://github.com/NovaSky-AI/SkyRL) | `BaseTextEnv.init/step` returning OpenAI messages + reward | in-process; Harbor integration | via Harbor | `envs/search` (Search-R1) |
+| [rLLM](https://github.com/rllm-org/rllm) | `@rllm.rollout def solve(task) → Episode` + evaluator; wraps 10+ CLI harnesses | — | Docker, Daytona, Modal | 60+ benchmarks incl. search |
+| [ART](https://github.com/OpenPipe/ART) (OpenPipe) | You write the rollout in plain Python; **RULER** = LLM judge that ranks a group, needing no reference; MCP·RL | client → training backend | none | ART·E email-search agent |
+| [Atropos](https://github.com/NousResearch/atropos) (Nous) | `BaseEnv` microservices push scored groups to a trajectory API | HTTP | — | deep-research env. **Repo archived** |
+| [GEM](https://github.com/axon-rl/gem) | Gym API for LLMs, async vectorised, tool wrappers | in-process | — | Search tool wrapper; adopted by [ROLL](https://github.com/alibaba/ROLL) |
+| [Agent Lightning](https://github.com/microsoft/agent-lightning) | Agents run unchanged; a gateway captures model calls for training | gateway + rollout controller | k8s Jobs | — |
+| [AReaL](https://github.com/inclusionAI/AReaL) / [slime](https://github.com/THUDM/slime) | Trainers; AReaL wraps black-box agents via a `base_url` proxy | — | — | AReaL powers ASearcher |
+| [AgentGym / -RL](https://github.com/WooooDyy/AgentGym) | One **HTTP EnvServer** per env (`reset`, `step`, `observation`) | HTTP | per env | SearchQA env |
+| [BrowserGym](https://github.com/ServiceNow/BrowserGym), [WebArena](https://github.com/web-arena-x/webarena), [WebArena-Verified](https://github.com/ServiceNow/webarena-verified) | Gym over Playwright; self-hosted sites; WebArena-Verified uses deterministic evaluators and offline replay of network traces | in-process + Docker sites | Docker | Browsing, not search APIs |
+| [SWE-Gym](https://github.com/SWE-Gym/SWE-Gym), [OpenHands](https://github.com/OpenHands/OpenHands), [Harbor](https://github.com/laude-institute/harbor) | Container tasks with tests; Harbor is becoming the shared task format (verifiers, TRL, SkyRL, rLLM, NeMo-Gym and OpenEnv all read it) | Docker / cloud | Docker, Daytona, Modal | — |
+| [Reasoning Gym](https://github.com/open-thought/reasoning-gym) | Procedural generators + `score_answer` | in-process | — | single turn, no tools |
+
+**Search-agent recipes** (the closest prior art):
+
+| Project | Search backend during RL | Reward | Notes |
+|---|---|---|---|
+| [Search-R1](https://github.com/PeterGriffinJin/Search-R1) ([paper](https://arxiv.org/abs/2503.09516)) | Local Wikipedia-2018 + E5 + FAISS, top-3, served at `POST /retrieve` | Exact match | Masking retrieved tokens out of the loss matters (0.431 vs 0.343) |
+| [ZeroSearch](https://github.com/Alibaba-NLP/ZeroSearch) ([paper](https://arxiv.org/abs/2505.04588)) | A fine-tuned LLM **simulates** the search engine | EM/F1 | No API cost; press reports ~88% cheaper (unverified) |
+| [R1-Searcher](https://github.com/RUCAIBox/R1-Searcher) | Local retrieval, then web | outcome | Two-stage RL |
+| [DeepResearcher](https://github.com/GAIR-NLP/DeepResearcher) ([paper](https://arxiv.org/abs/2504.03160)) | **Real web** (Serper/Bing) + browsing LLM | F1 | Bursts of 4,096 concurrent requests, a 50-node CPU tool cluster, caching, rate-limit pain |
+| [ASearcher](https://github.com/inclusionAI/ASearcher) ([paper](https://arxiv.org/abs/2508.07976)) | Local wiki or web | F1 + LLM judge | 100+ tool calls and 400k tokens per trajectory; fully async; training locally transfers to the web |
+| [Tongyi DeepResearch / WebSailor family](https://github.com/Alibaba-NLP/DeepResearch) | Serper + page visitor | LLM judge | Synthetic data + agentic mid-training + GRPO |
+| [MiroFlow](https://github.com/MiroMindAI/MiroFlow) | Tools as MCP servers | — | Eval framework; GAIA, BrowseComp, xBench |
+
+### 3.2 Serving and scale: what others do
+
+**How environments are exposed.**
+- **HTTP/FastAPI services** are the norm: NeMo-Gym, AgentGym and Atropos.
+- **OpenEnv** uses WebSocket and **verifiers** uses ZMQ. I found no framework
+  that documents gRPC.
+- The pattern that is winning is a **three-way split: model server ↔ agent loop
+  ↔ tool/verifier server**. The pieces communicate by HTTP, and each piece scales
+  on its own. SearchForge already has the tool-server piece: its MCP server runs
+  outside the sandbox.
+
+**Keeping rollout separate from training.**
+- [prime-rl](https://github.com/PrimeIntellect-ai/prime-rl),
+  [AReaL](https://arxiv.org/abs/2505.24298) and
+  [PipelineRL](https://arxiv.org/abs/2509.19128v2) all run rollouts
+  asynchronously, on GPUs separate from training, with a bound on how stale the
+  policy may get. Each reports roughly 2–2.8× better throughput than synchronous
+  training.
+- [Kimi K2](https://arxiv.org/abs/2507.20534) stays synchronous. It uses
+  "partial rollouts" instead: very long trajectories are paused and resumed in the
+  next step.
+
+**Sandboxing.**
+- Code and terminal environments need it: Docker, Modal, E2B, Daytona, Prime
+  sandboxes or k8s. Kimi K2 ran over 10k sandboxes at once.
+- **Search agents mostly don't need one**, because the tools are API calls. The
+  real isolation need is the one SearchForge already enforces: credentials stay in
+  the tool server, and the harness gets no network egress.
+
+**Search backends at scale.** There are three approaches, and serious projects
+use more than one:
+
+1. **Live APIs.** DeepResearcher and Tongyi do this. It is realistic but costly,
+   rate-limited and impossible to repeat exactly. DeepResearcher had to add caching
+   and a CPU cluster.
+2. **A frozen corpus with a local retriever.** Search-R1 uses Wikipedia-2018 +
+   E5.
+   - [BrowseComp-Plus](https://arxiv.org/abs/2508.06600) offers ~100k curated
+     documents with gold evidence.
+   - [DeepResearchGym](https://arxiv.org/abs/2505.19253) offers ClueWeb22 +
+     FineWeb behind `/search` and `/fetch`.
+   - This is cheap and deterministic, and ASearcher reports that training this way
+     transfers to the live web.
+3. **A simulated search engine** ([ZeroSearch](https://arxiv.org/abs/2505.04588)).
+
+**Bottlenecks people report:**
+- **Long-tail rollouts** leave GPUs idle (ASearcher: 100× token spread).
+- **Tool latency, rate limits and anti-crawl blocking** (DeepResearcher).
+- **Context length**: ASearcher keeps only the last 25k characters, and trains
+  the model to summarise pages.
+- **Unmasked tool tokens destabilise training.**
+- **Reward hacking.** Live search can find the answer key itself. Anthropic
+  [documented](https://www.anthropic.com/engineering/eval-awareness-browsecomp) a
+  model finding and decrypting BrowseComp answers from GitHub.
+
+### 3.3 How benchmarks get plugged in
+
+**The Search-R1 "standard 7"**
+([paper §4](https://arxiv.org/abs/2503.09516)):
+- **Datasets**: NQ, TriviaQA, PopQA, HotpotQA, 2Wiki, MuSiQue and Bamboogle.
+- **Training split**: train on NQ + HotpotQA; the other five are out-of-domain.
+- **Metric**: Exact Match.
+- **Where it's reused**: SkyRL, verl and the Prime `search_r1_ish` env.
+- **Why it matters here**: it is the comparison table reviewers expect.
+
+**Harder agentic sets**:
+- **Benchmarks**: FRAMES (824 questions), BrowseComp (1,266, encrypted),
+  BrowseComp-Plus, GAIA (text subset), xbench-DeepSearch (encrypted) and HLE.
+- **How they're reported**: usually with an LLM judge, as Avg@k or Pass@k
+  ([ASearcher](https://arxiv.org/abs/2508.07976)).
+
+**Grader conventions to copy rather than reinvent:**
+- **SimpleQA**
+  ([simpleqa_eval.py](https://github.com/openai/simple-evals/blob/main/simpleqa_eval.py))
+  grades three ways: CORRECT, INCORRECT or NOT_ATTEMPTED. It reports
+  accuracy-given-attempted and an F1 score, which rewards a model for abstaining
+  rather than guessing.
+  - SearchForge's judge is binary, and its prompt *forbids* abstaining. That is a
+    deliberate choice, but it should be stated whenever results are compared with
+    SimpleQA numbers.
+- **BrowseComp**
+  ([browsecomp_eval.py](https://github.com/openai/simple-evals/blob/main/browsecomp_eval.py))
+  extracts an exact answer, has a judge return `correct: yes|no`, and reports
+  confidence for calibration. The data is XOR-encrypted with a per-row canary;
+  this stops crawlers, not determined models.
+
+**Eval harnesses:**
+
+| Harness | Defines a task as | Agentic tools? | Search benchmarks included |
+|---|---|---|---|
+| [lm-evaluation-harness](https://github.com/EleutherAI/lm-evaluation-harness) | YAML + Jinja prompt, generate/loglikelihood | No | QA sets only, closed-book |
+| [inspect_ai](https://inspect.aisi.org.uk/) / [inspect_evals](https://github.com/UKGovernmentBEIS/inspect_evals) | dataset + solver/agent (`react()`) + scorer; sandboxes | **Yes**, with a built-in `web_search()` tool (Tavily, Exa, Google, provider-native, …) | `browse_comp`, `gaia`, `assistant_bench`, `mind2web`, `hle`; SimpleQA-verified (unverified) |
+| [lighteval](https://github.com/huggingface/lighteval) | Custom tasks/metrics; **uses inspect-ai as its preferred backend** | through inspect | — |
+| [OpenAI simple-evals](https://github.com/openai/simple-evals) | Python eval classes | minimal | SimpleQA, BrowseComp graders. **Deprecated Jul 2025**, kept as a reference |
+| [HELM](https://github.com/stanford-crfm/helm) | scenarios + metrics | not that I found | — |
+| [Prime Hub evals](https://docs.primeintellect.ai/tutorials-environments/getting-started) | the verifiers environment itself | Yes | see 3.1 |
+| [liquid4all/search_evals](https://github.com/liquid4all/search_evals) | compares **search APIs** on BrowseComp, SimpleQA, FRAMES, HLE | Yes | Closest to SearchForge's question, but eval only, with no pairing statistics and no RL |
+
+---
+
+## 4. Recommendations and roadmap
+
+### 4.1 Where SearchForge stands against the field
+
+**What it already does better than most:**
+
+- **It treats the search backend as the experimental variable.**
+  - Every framework above treats search as fixed plumbing.
+  - NeMo-Gym has `google_search` and `tavily_search` as *separate environments*,
+    with no paired comparison between them.
+  - `search_evals` compares APIs but has no paired statistics and no training.
+  - **No one ships a paired, same-question, provider A/B test with McNemar and
+    a fail-closed validity gate.** That is SearchForge's niche.
+- **Good measurement habits:**
+  - weight-0 diagnostics, so diagnostics are not optimised
+  - a native-search canary, which voids runs where the model bypassed the tools
+  - grounding checked against the episode's own retrievals, never gold URLs
+  - "answer-for-you" provider features switched off in every arm
+  - axis labels that say `unknown` rather than a guess
+- **Sound security defaults.** Keys live only in the tool server, the harness has
+  no egress, and the judge prompt treats its inputs as untrusted.
+- **It sits on a maintained framework.** It is already on the verifiers v1 API,
+  so it gets prime-rl, the Hub, sandboxes and the ZMQ env server without
+  building them.
+
+**What is missing, compared with the field:**
+
+| Gap | Who has it | Size of the gap |
+|---|---|---|
+| A training run of any size | everyone in §3.1 recipes | Large: blocked by #1 (page cap) |
+| Cache / replay / frozen-corpus mode | Search-R1, BrowseComp-Plus, DeepResearchGym, DeepResearcher (cache) | Medium |
+| Fingerprinted, self-validating comparisons | none do it fully; WebArena-Verified does offline replay | Medium, and it is *the* differentiator |
+| Standard benchmark reporting (Search-R1 7 with EM; SimpleQA 3-way; BrowseComp-Plus) | Search-R1, ASearcher, inspect_evals | Small–medium |
+| Distribution: listed on the Hub, an OpenEnv/HTTP adapter, PyPI | prime-environments, OpenEnv, NeMo-Gym | Small |
+| Answer-leak blocking (HF dataset pages, eval repos) | verifiers interception hooks, Anthropic guidance | Small |
+| CI, lint, scheduled live checks | most mature repos | Small |
+| Token and cost accounting per arm in dollars | search_evals (partly) | Small |
+
+### 4.2 Positioning
+
+**"The controlled-experiment layer for search in agent RL."** In practice that
+means:
+
+1. Bring your model and the search APIs you are considering.
+2. Get a paired, fingerprinted, statistically honest comparison, both at eval
+   time and after a short RL run.
+3. Optionally, train against a cached or frozen backend so results can be
+   repeated exactly.
+
+Two groups would use it:
+
+- **Teams choosing a search API** for an agent product. This is eval-only, needs
+  no GPU and serves a large audience.
+- **Researchers** who need to say which part of a search-agent gain came from the
+  retriever.
+
+The search providers themselves are a third audience. They currently publish
+vendor-run benchmarks, such as the Exa study the README quotes, and an
+independent harness is useful to them too.
+
+Do **not** compete on being a general RL framework, a sandbox host or a browser
+environment. The field is crowded there, and verifiers, NeMo-Gym and OpenEnv
+already do it well.
+
+### 4.3 Roadmap
+
+Sizes: **S** ≈ ≤2 days, **M** ≈ 1–2 weeks, **L** ≈ 3–6 weeks, all for one
+person.
+
+#### Near term (next ~4–6 weeks): make one comparison credible, and train once
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| N1 | **Equal page cap + head/tail truncation marker** in `web_fetch`, set by config, recorded in the trace | S | Measure at 4k, 8k and 16k chars against the logged fetch-size distribution. The same cap applies to every arm. Unblocks training (§2 #1). |
+| N2 | **Comparison fingerprint.** Hash the toolset config minus `provider`, plus the judge model and prompt hash, system prompt hash, data file hash, model, harness and verifiers version. Store it in each trace's `info`. `matrix.py` refuses to compare arms with different hashes. | S–M | The project's core promise (§2 #2). |
+| N3 | **Search/fetch cache** (SQLite or disk, keyed on provider + endpoint + normalised args + date). Modes: `off` / `read-write` / `replay-only`. | M | Cuts cost and rate-limit pain. Makes runs repeatable and replay-only CI possible. Record cache hits per trace so a comparison can say "both arms were live". |
+| N4 | **Slice `matrix.py` by `source_dataset` and `hops`, and support N providers** (all pairs, with Holm correction) | S | §2 #6–7. |
+| N5 | **Validate the 300 rows** (one pass with two providers + judge; flag disagreements by hand) and stamp `validated_on` | M | §2 #3. |
+| N6 | **Publish the 300-row Serper × Exa (+1–2 more) baseline**: a results doc with cost per arm | S (once N1–N5 are done) | First real result; the thing to share. |
+| N7 | **Hygiene**: CI (pytest + ruff + dry run with `configs/eval.toml`), `ast.literal_eval`, reuse httpx clients, filter FRAMES yes/no answers, fuzzy `answer_in_results` | S | §2 #9, #11–16. |
+| N8 | **Bump to verifiers 0.4.x** and re-run the suite | S | Stays on the maintained line before others depend on it. |
+| N9 | **First small prime-rl run** (Qwen3-1.7B/4B, one provider, cached backend, 4k–8k seq_len) | M–L | Proves the reward gives a learning signal after N1. Then repeat on the second provider: that is the Exa experiment, re-run in the open. |
+
+#### Mid term (~2–4 months): make it easy to adopt
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| M1 | **Publish on the Prime Environments Hub** (`prime env push`), with the 300-row mixture and the 8-row smoke set | S | Users who already run prime-rl get it for free. |
+| M2 | **A standalone HTTP search-tool server** (FastAPI): `POST /search`, `POST /fetch`, `GET /providers`, with a cache, budget and per-call logs. The MCP server becomes a thin wrapper around it. | M | Lets any framework use the provider layer: verl `BaseTool`, TRL `environment_factory`, NeMo-Gym resources, inspect `web_search` custom provider. Also the base for an OpenEnv image. |
+| M3 | **Adapters** (thin, one file each): OpenEnv Docker image; TRL `environment_factory` class; inspect_ai task + tool; NeMo-Gym resources server | M total | Each adapter reuses M2. Ship two first: inspect (eval users) and TRL/OpenEnv (training users). |
+| M4 | **Benchmark packs** as `build_taskset` sources: Search-R1 7 (NQ, TriviaQA, PopQA, Bamboogle loaders + EM/F1 metrics at weight 0), SimpleQA-verified, BrowseComp-Plus (local only, never committed), GAIA text subset | M | Report EM next to the judge so results line up with the literature. Add a three-way SimpleQA grader as an optional judge. |
+| M5 | **Frozen-backend arm**: a "provider" backed by BrowseComp-Plus or Wiki-2018 E5 (local retriever) or DeepResearchGym | M | Gives a deterministic control arm and cheap training; answers "does training on a frozen corpus transfer to live APIs?" for each provider. |
+| M6 | **Answer-leak guard**: block fetch/search hits on HF dataset pages, known eval repos and the simple-evals blob; count blocked hits per arm as a metric | S | Guards against reward hacking. Blocking is identical across arms, so it stays fair. |
+| M7 | **Cost and latency per arm**: $ per call table per provider, p50/p95 latency from the tool logs, shown in the matrix | S | Product-relevant: "Exa is +x points at $y more per 1k questions". |
+| M8 | **Docs site + PyPI release** (`pip install searchforge`): quickstart (eval without a GPU in 5 minutes), "add a provider", "add a benchmark", "how to read the matrix" | M | |
+
+#### Long term (4+ months): research results and scale
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| L1 | **Train on provider A, evaluate on B** (the full matrix) at 4B and 32B | L | The headline research question: do provider effects survive at scale and across backends? |
+| L2 | **Trace-based behaviour analysis**: how query wording changes after training, when the agent stops, fetch vs re-search, all per provider | M | The data already exists (README "Interpretability"). |
+| L3 | **More knobs, each fingerprinted**: harness, reward shape, RL estimator (GRPO vs others, verl backend), mixture weights, page cap, parallel tools | L | Keep the rule: one knob per labelled comparison. |
+| L4 | **Scale design for live training**: a pool of tool servers per provider with per-key token buckets, a shared cache service (Redis/S3), async rollouts via prime-rl with a per-turn deadline, partial rollouts for the long tail | L | DeepResearcher's lessons. Live search becomes the bottleneck long before GPUs do. |
+| L5 | **A public leaderboard** of model × provider × benchmark slice, re-run on a schedule, with frozen and live arms | L | The "useful product" end state; vendors and users can both point at it. |
+| L6 | **Context-management tools** (`web_fetch` with `page`/`find` arguments, or a summarise step) as a fingerprinted knob | M | The ASearcher-style fix for long pages, measured rather than assumed. |
+
+### 4.4 Scaling design, in one picture
+
+```
+         trainer (prime-rl)          eval CLI / inspect / TRL / OpenEnv
+                │  async, off-policy-bounded         │
+                ▼                                    ▼
+        verifiers env server (ZMQ)  ── or ──  adapters (M3)
+                │ per rollout: Task + MCP toolset
+                ▼
+   SearchForge tool service (M2: HTTP + MCP wrapper)
+     ├─ budget, parallel gate, page cap (N1), leak guard (M6)
+     ├─ cache: off | read-write | replay-only (N3) ── shared store (L4)
+     ├─ per-provider client pools + rate limiters (L4)
+     └─ providers: 7 live APIs | frozen corpus (M5)
+                │
+                ▼
+   traces.jsonl (+ fingerprint N2) → live_gate → matrix (slices, N-way, cost)
+```
+
+The rule that keeps comparisons honest at scale: **everything inside the tool
+service applies identically to every arm, and is written into the
+fingerprint.**
+
+### 4.5 Top 5 next actions
+
+1. **Add an equal, configurable page cap to `web_fetch`** (N1). It unblocks
+   training and is logged in every trace.
+2. **Write the comparison fingerprint** into every trace, and make `matrix.py`
+   refuse arms that do not match (N2).
+3. **Add a search/fetch cache with a replay-only mode** (N3), so runs are
+   cheaper and can be repeated.
+4. **Validate the 300 rows, then publish the paired 300-row baseline**, sliced
+   by source and hops (N4–N6).
+5. **List the environment on the Prime Environments Hub and run the first small
+   prime-rl training run** on a cached backend (M1, N9).

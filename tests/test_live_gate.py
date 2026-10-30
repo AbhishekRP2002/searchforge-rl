@@ -15,7 +15,12 @@ def _trace(provider: str, *, native: float = 0.0, judge: bool = True) -> dict:
             {"message": {"role": "tool", "name": "web_fetch", "content": "y"}},
         ],
         "metrics": {"native_search_calls": native},
-        "info": {"judge": [{"result": "yes"}]} if judge else {},
+        # The verifiers 0.4 shape: one request/response record per judge exchange.
+        "info": (
+            {"judge_calls": [{"name": "searchforge", "response": {"parsed": 1.0}}]}
+            if judge
+            else {}
+        ),
         "errors": [],
     }
 
@@ -68,7 +73,9 @@ def test_live_gate_fails_closed_when_proof_is_missing(tmp_path, mutation, messag
 def test_gate_passes_a_real_run_artifact():
     """The gate is fail-closed, so a false negative is as damaging as a false
     positive: it blocked a run that had actually met every condition. This pins it
-    against a real traces.jsonl rather than a hand-built one."""
+    against a real traces.jsonl rather than a hand-built one. That artifact was
+    written by verifiers 0.3.1 (`info.judge`), so it also pins that older runs
+    still gate after the 0.4 move to `info.judge_calls`."""
     from pathlib import Path
 
     from scripts.live_gate import validate_traces

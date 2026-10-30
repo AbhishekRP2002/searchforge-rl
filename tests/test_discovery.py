@@ -2,7 +2,7 @@
 
 verifiers resolves a taskset id by importing the module named after it and reading
 `__all__` — see verifiers.v1.utils.loaders._import_plugin / _plugin_class. If this
-test fails, `uv run eval searchforge` cannot work.
+test fails, `uv run vf-eval searchforge` cannot work.
 """
 
 from verifiers.v1.utils.loaders import taskset_class

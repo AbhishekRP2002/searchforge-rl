@@ -124,9 +124,11 @@ assumption.
 many cells, and the value was never "swap everything at once" — it is "swap one
 thing and get a comparison that holds". That puts the weight on the environment
 refusing to render a comparison whose arms differ in more than one place.
-Today's gap: the serialized trace records no toolset configuration
-(`task.config` is `null`), so `scripts/matrix.py` cannot assert a fingerprint
-yet. With one knob that is a small risk. With six it is the whole ballgame.
+Today's gap: a serialized trace records the task row and the agent config
+(model, harness, runtime, sampling) but no toolset or judge configuration, so
+`scripts/matrix.py` cannot assert a fingerprint yet. The full resolved config
+does exist per run, in `outputs/<run>/configs/resolved/eval.json`. With one knob
+that is a small risk. With six it is the whole ballgame.
 
 ## The task mixture
 
@@ -156,7 +158,7 @@ for smoke runs) could not — it produced 7 ties out of 7.
 uv run --with datasets python -m scripts.build_taskset --hotpotqa 100 --simpleqa 40
 
 # run against it
-uv run eval searchforge --env.taskset.data_path searchforge/data/tasks_v1.jsonl
+uv run vf-eval searchforge --env.taskset.data_path searchforge/data/tasks_v1.jsonl
 ```
 
 **Two honest caveats.**
@@ -258,9 +260,15 @@ into traces. `PRIME_API_KEY` is used by the documented model/judge endpoint.
 
 ```bash
 uv run pytest
-uv run eval searchforge --dry-run --no-push \
-  --env.taskset.providers '["serper", "exa"]'
+uv run vf-eval @ configs/eval.toml --dry-run --no-push
 ```
+
+The dry run resolves the launch config (null harness, docker runtime, the
+providers listed in `configs/eval.toml`) without calling a model. The CLI is
+`vf-eval` from verifiers 0.4; the bare `eval` command of 0.3 no longer exists.
+A list in the config file cannot be overridden on the same command line, so
+change providers by editing `configs/eval.toml`, or run without `@` and pass
+`--env.taskset.providers '["serper", "exa"]'`.
 
 Datasets are package assets under `searchforge/data/`, so installed wheels do
 not depend on a repository checkout. `tasks_v0.jsonl` (8 rows) stays the default
@@ -279,7 +287,7 @@ uv run pytest -m live tests/live -v
 ## Full comparative live gate
 
 ```bash
-uv run --env-file .env eval searchforge \
+uv run --env-file .env vf-eval searchforge \
   --env.agent.harness.id null \
   --env.agent.runtime.type docker \
   --env.agent.runtime.allow '[]' \

@@ -34,7 +34,7 @@ from searchforge.providers.tinyfish import TinyFishProvider
 from searchforge.render import render_page, render_results
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 PROVIDERS: dict[str, tuple[str, Callable[[str], SearchProvider]]] = {
     "serper": ("SERPER_API_KEY", SerperProvider),
@@ -242,13 +242,18 @@ class WebToolset(vf.Toolset[WebToolsetConfig]):
             return False
         return True
 
-    def register(self, mcp: FastMCP) -> None:
+    def register(self, mcp: MCPServer) -> None:
         """Advertise exactly one `search` variant.
 
         `search` and `search_dated` are both named `search` for the model, and
-        FastMCP builds each schema from the method signature. Registering only one
-        keeps the date arguments out of the schema entirely when the filter is off,
-        so an `off` run is byte-identical to one from before the knob existed.
+        the MCP server builds each schema from the method signature. Registering
+        only one keeps the date arguments out of the schema entirely when the
+        filter is off, so an `off` run is byte-identical to one from before the
+        knob existed.
+
+        This repeats the base `Toolset.register` loop, which verifiers (0.4.0)
+        still offers no public hook to filter, so `discover_decorated` is an
+        internal import. The real-server schema test fails if either changes.
         """
         hidden = "search" if self.config.date_filter != "off" else "search_dated"
         for fn in discover_decorated(self, "tool"):

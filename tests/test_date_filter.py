@@ -325,6 +325,23 @@ def test_only_one_search_schema_is_advertised(mode, params):
     assert list(mcp.tools["search"].parameters) == params
 
 
+@pytest.mark.parametrize(
+    ("mode", "params"),
+    [("off", ["query"]), ("native", ["query", "after", "before"])],
+)
+async def test_real_mcp_server_advertises_the_schema_the_model_sees(mode, params):
+    """The fake above checks signatures; this checks the JSON schema a real MCP
+    server builds from them. `register` repeats a verifiers-internal loop, so this
+    is the test that fails if a verifiers or mcp upgrade changes how tools land."""
+    from mcp.server.mcpserver import MCPServer
+
+    mcp = MCPServer("searchforge-test")
+    WebToolset(WebToolsetConfig(env_file=None, date_filter=mode)).register(mcp)
+    tools = {tool.name: tool for tool in await mcp.list_tools()}
+    assert set(tools) == {"search", "fetch"}
+    assert list(tools["search"].input_schema["properties"]) == params
+
+
 # --- the prompt -------------------------------------------------------------
 
 

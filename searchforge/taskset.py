@@ -97,7 +97,7 @@ class SearchForgeTask(vf.Task[SearchForgeData, vf.State, SearchForgeTaskConfig])
     async def context_overflow(self, trace: vf.Trace) -> float:
         # `is_truncated`, not `stop_condition == "truncated"`: no stop condition
         # uses that string. The real values are max_turns / max_input_tokens /
-        # max_output_tokens / max_total_tokens / context_length, plus a
+        # max_output_tokens / max_total_tokens / compaction_failed, plus a
         # length-finished final response, which is exactly what is_truncated folds.
         return float(trace.is_truncated)
 
@@ -131,6 +131,9 @@ class SearchForgeTask(vf.Task[SearchForgeData, vf.State, SearchForgeTaskConfig])
 
     @vf.metric
     async def tokens_consumed(self, trace: vf.Trace) -> float:
+        # verifiers 0.4 counts new input once per call plus every generated token
+        # (0.3 summed final sequence lengths). On this taskset's single linear branch
+        # both come to roughly the final sequence length, so runs stay comparable.
         return float(trace.num_total_tokens)
 
     @vf.metric

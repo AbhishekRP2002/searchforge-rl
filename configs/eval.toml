@@ -1,4 +1,4 @@
-# Launch config: `uv run eval @ configs/eval.toml`
+# Launch config: `uv run vf-eval @ configs/eval.toml`
 #
 # Pins the three settings whose library defaults are wrong for this project. The
 # policy model is still overridable with `-m`; everything here is a default, not a lock.
@@ -19,4 +19,9 @@ id = "null"
 type = "docker"
 
 [env.taskset]
+# Without the id, the CLI cannot tell which taskset owns `providers` and rejects the
+# file, so `vf-eval @ configs/eval.toml` needs no positional `searchforge`.
+id = "searchforge"
+# A list set here cannot be overridden by `--env.taskset.providers` on the same command
+# line (the CLI rejects the string). Edit this line, or drop `@ configs/eval.toml`.
 providers = ["serper", "exa"]

@@ -53,8 +53,13 @@ def validate_traces(path: Path, *, expected_providers: set[str]) -> dict:
     if native:
         raise GateFailure(f"native search canary fired {native:g} time(s)")
 
+    # verifiers 0.4 records each judge exchange under `judge_calls`; 0.3.x wrote bare
+    # responses under `judge`. Both are accepted so older run artifacts still gate.
     judge_executions = sum(
-        bool(trace.get("info", {}).get("judge")) for trace in traces
+        bool(
+            (info := trace.get("info", {})).get("judge_calls") or info.get("judge")
+        )
+        for trace in traces
     )
     if judge_executions != len(traces):
         raise GateFailure(
